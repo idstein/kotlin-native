@@ -38,7 +38,9 @@ private fun calculateChurn(workDir: String, limit: Int) {
     val map = mutableMapOf<String, Int>()
     var count = 0
     val commits = repository.commits()
+    val myCommits = repository.myCommits()
     val limited = commits.take(limit)
+    val myLimited = myCommits.take(limit)
     println("Calculating…")
     limited.forEach { commit ->
         if (count % 100 == 0)
@@ -57,6 +59,27 @@ private fun calculateChurn(workDir: String, limit: Int) {
         commit.close()
         count++
     }
+
+    count = 0
+    println("Calculating by my own way…")
+    myLimited.forEach { commit ->
+        if (count % 100 == 0)
+            println("Commit #$count [${commit.time.format()}]: ${commit.summary}")
+
+        commit.parents.forEach { parent ->
+            val diff = commit.tree.diff(parent.tree)
+            diff.deltas().forEach { delta ->
+                val path = delta.newPath
+                val n = map[path] ?: 0
+                map.put(path, n + 1)
+            }
+            diff.close()
+            parent.close()
+        }
+        commit.close()
+        count++
+    }
+
     println("Report:")
     map.toList().sortedByDescending { it.second }.take(10).forEach {
         println("File: ${it.first}")

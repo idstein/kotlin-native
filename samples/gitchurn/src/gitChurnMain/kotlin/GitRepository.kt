@@ -38,7 +38,7 @@ class GitRepository(val location: String) {
 
     fun commits(): Sequence<GitCommit> = memScoped {
         val walkPtr = allocPointerTo<git_revwalk>()
-        git_revwalk_new(walkPtr.ptr, handle).errorCheck()
+        git_revwalk_new(out = walkPtr.ptr, repo = handle).errorCheck()
         val walk = walkPtr.value
         git_revwalk_sorting(walk, GIT_SORT_TOPOLOGICAL or GIT_SORT_TIME)
         git_revwalk_push_head(walk).errorCheck()
@@ -58,6 +58,21 @@ class GitRepository(val location: String) {
                     else -> throw Exception("Unexpected result code $result")
                 }
             }
+        }
+    }
+
+    fun myCommits() = memScoped {
+        val walk = GitRevwalk(handle, sort = GIT_SORT_TOPOLOGICAL or GIT_SORT_TIME)
+        walk.repush()
+            generateSequence {
+
+                val commitPtr = allocPointerTo<git_commit>()
+                val oidPointer = walk.oid
+                if (oidPointer != null) {
+                    git_commit_lookup(commitPtr.ptr, handle, oidPointer).errorCheck()
+                    val commit = commitPtr.value!!
+                    GitCommit(this@GitRepository, commit)
+                }else{null}
         }
     }
 }
