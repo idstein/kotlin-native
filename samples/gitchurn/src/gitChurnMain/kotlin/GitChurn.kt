@@ -36,12 +36,13 @@ private fun calculateChurn(workDir: String, limit: Int) {
     println("Opening…")
     val repository = git.repository(workDir)
     val map = mutableMapOf<String, Int>()
+    val namedMap = mutableMapOf<Pair<String, String>, Int>()
     var count = 0
     val commits = repository.commits()
     val myCommits = repository.myCommits()
     val limited = commits.take(limit)
     val myLimited = myCommits.take(limit)
-    println("Calculating…")
+    /*println("Calculating…")
     limited.forEach { commit ->
         if (count % 100 == 0)
             println("Commit #$count [${commit.time.format()}]: ${commit.summary}")
@@ -59,19 +60,20 @@ private fun calculateChurn(workDir: String, limit: Int) {
         commit.close()
         count++
     }
-
     count = 0
+    */
     println("Calculating by my own way…")
     myLimited.forEach { commit ->
         if (count % 100 == 0)
-            println("Commit #$count [${commit.time.format()}]: ${commit.summary}")
+            println("Commit #$count [${commit.time.format()}] by ${commit.author.name!!.toKString()}: ${commit.summary}")
 
         commit.parents.forEach { parent ->
             val diff = commit.tree.diff(parent.tree)
             diff.deltas().forEach { delta ->
                 val path = delta.newPath
-                val n = map[path] ?: 0
-                map.put(path, n + 1)
+                val n = namedMap[Pair(parent.author.name!!.toKString(), path)] ?: 0
+                map[path] = n + 1
+                namedMap[Pair(parent.author.name!!.toKString(), path)] = n + 1
             }
             diff.close()
             parent.close()
@@ -83,6 +85,14 @@ private fun calculateChurn(workDir: String, limit: Int) {
     println("Report:")
     map.toList().sortedByDescending { it.second }.take(10).forEach {
         println("File: ${it.first}")
+        println("      ${it.second}")
+        println()
+    }
+    println("Named Report:")
+    //namedMap.toList().sortedBy { it.first.second }.take(10).forEach {
+    namedMap.toList().sortedBy { it.second }.filter { it.first.second == "backend.native/tests/build.gradle" }.forEach {
+        println("Author: ${it.first.first}")
+        println("File: ${it.first.second}")
         println("      ${it.second}")
         println()
     }
