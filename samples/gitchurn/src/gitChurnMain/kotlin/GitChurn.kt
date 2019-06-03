@@ -71,9 +71,9 @@ private fun calculateChurn(workDir: String, limit: Int) {
             val diff = commit.tree.diff(parent.tree)
             diff.deltas().forEach { delta ->
                 val path = delta.newPath
-                val n = namedMap[Pair(parent.author.name!!.toKString(), path)] ?: 0
+                val n = namedMap[Pair(parent.author.email!!.toKString().toLowerCase(), path)] ?: 0
                 map[path] = n + 1
-                namedMap[Pair(parent.author.name!!.toKString(), path)] = n + 1
+                namedMap[Pair(parent.author.email!!.toKString().toLowerCase(), path)] = n + 1
             }
             diff.close()
             parent.close()
@@ -82,19 +82,24 @@ private fun calculateChurn(workDir: String, limit: Int) {
         count++
     }
 
-    println("Report:")
+    /*println("Report:")
     map.toList().sortedByDescending { it.second }.take(10).forEach {
         println("File: ${it.first}")
         println("      ${it.second}")
         println()
-    }
+    }*/
     println("Named Report:")
-    //namedMap.toList().sortedBy { it.first.second }.take(10).forEach {
-    namedMap.toList().sortedBy { it.second }.filter { it.first.second == "backend.native/tests/build.gradle" }.forEach {
-        println("Author: ${it.first.first}")
+
+    namedMap.toList().filter { it.second > 20 }.groupBy { it.first.first }.values.forEach {
+        println("Author: ${it[0].first.first}")
+        it.sortedByDescending { it.second }.forEach {
+
+    //namedMap.toList().sortedByDescending { it.second }.takeWhile { it.second > 20 }.forEach {
+        //println("Author: ${it.first.first}")
         println("File: ${it.first.second}")
         println("      ${it.second}")
         println()
+        }
     }
 
     repository.close()
