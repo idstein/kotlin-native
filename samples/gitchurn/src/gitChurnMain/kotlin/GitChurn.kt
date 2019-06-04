@@ -35,12 +35,12 @@ fun main(args: Array<String>) {
 private fun calculateChurn(workDir: String, limit: Int) {
     println("Opening…")
     val repository = git.repository(workDir)
-    val map = mutableMapOf<String, Int>()
+    //val map = mutableMapOf<String, Int>()
     val namedMap = mutableMapOf<Pair<String, String>, Int>()
     var count = 0
-    val commits = repository.commits()
+    //val commits = repository.commits()
     val myCommits = repository.myCommits()
-    val limited = commits.take(limit)
+    //val limited = commits.take(limit)
     val myLimited = myCommits.take(limit)
     /*println("Calculating…")
     limited.forEach { commit ->
@@ -70,9 +70,13 @@ private fun calculateChurn(workDir: String, limit: Int) {
         commit.parents.forEach { parent ->
             val diff = commit.tree.diff(parent.tree)
             diff.deltas().forEach { delta ->
-                val path = delta.newPath
+                //val path = delta.newPath.dropLastWhile { it!='/' }
+                val path = if (delta.newPath == delta.newPath.substringBefore('/'))
+                    delta.newPath
+                else
+                    delta.newPath.substringBefore('/') + "/"
                 val n = namedMap[Pair(parent.author.email!!.toKString().toLowerCase(), path)] ?: 0
-                map[path] = n + 1
+                //map[path] = n + 1
                 namedMap[Pair(parent.author.email!!.toKString().toLowerCase(), path)] = n + 1
             }
             diff.close()
@@ -92,14 +96,18 @@ private fun calculateChurn(workDir: String, limit: Int) {
 
     namedMap.toList().filter { it.second > 20 }.groupBy { it.first.first }.values.forEach {
         println("Author: ${it[0].first.first}")
+        var changedFilesSum = 0
         it.sortedByDescending { it.second }.forEach {
 
     //namedMap.toList().sortedByDescending { it.second }.takeWhile { it.second > 20 }.forEach {
         //println("Author: ${it.first.first}")
-        println("File: ${it.first.second}")
-        println("      ${it.second}")
-        println()
+            println("File: ${it.first.second}")
+            println("      ${it.second}")
+            println()
+            changedFilesSum+=it.second
         }
+        println("Made $changedFilesSum modifications in total")
+        println("________________________")
     }
 
     repository.close()
