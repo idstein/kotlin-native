@@ -40,7 +40,7 @@ private fun calculateChurn(workDir: String, limit: Int) {
     var count = 0
     val commits = repository.myCommits()
     val commitsLimit = commits.take(limit)
-    println("Calculating by my own way…")
+    println("Calculating…")
     commitsLimit.forEach { commit ->
         if (count % 100 == 0)
             println("Commit #$count [${commit.time.format()}] by ${commit.author.name!!.toKString()}: ${commit.summary}")
@@ -62,7 +62,7 @@ private fun calculateChurn(workDir: String, limit: Int) {
         count++
     }
     println("Named Report:")
-    modificationsByAuthor.toList().filter { it.second > 20 }.groupBy { it.first.authorEmail }.values.forEach {
+    modificationsByAuthor.toList().groupBy { it.first.authorEmail }.values.forEach {
         println("Author: ${it[0].first.authorEmail}")
         var changedFilesSum = 0
         it.sortedByDescending { it.second }.forEach(fun(it: Pair<WhoAndWhere, Int>) {

@@ -66,7 +66,7 @@ class GitRepository(val location: String) {
         walk.repush()
         generateSequence {
             val commitPtr = allocPointerTo<git_commit>()
-            val oidPointer = walk.oid
+            val oidPointer = walk.oid()
             if (oidPointer != null) {
                 git_commit_lookup(commitPtr.ptr, handle, oidPointer).errorCheck()
                 val commit = commitPtr.value!!
