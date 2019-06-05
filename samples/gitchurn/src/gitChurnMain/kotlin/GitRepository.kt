@@ -64,15 +64,16 @@ class GitRepository(val location: String) {
     fun myCommits() = memScoped {
         val walk = GitRevwalk(handle, sort = GIT_SORT_TOPOLOGICAL or GIT_SORT_TIME)
         walk.repush()
-            generateSequence {
-
-                val commitPtr = allocPointerTo<git_commit>()
-                val oidPointer = walk.oid
-                if (oidPointer != null) {
-                    git_commit_lookup(commitPtr.ptr, handle, oidPointer).errorCheck()
-                    val commit = commitPtr.value!!
-                    GitCommit(this@GitRepository, commit)
-                }else{null}
+        generateSequence {
+            val commitPtr = allocPointerTo<git_commit>()
+            val oidPointer = walk.oid
+            if (oidPointer != null) {
+                git_commit_lookup(commitPtr.ptr, handle, oidPointer).errorCheck()
+                val commit = commitPtr.value!!
+                GitCommit(this@GitRepository, commit)
+            } else {
+                null
+            }
         }
     }
 }
