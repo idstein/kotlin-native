@@ -35,49 +35,25 @@ fun main(args: Array<String>) {
 private fun calculateChurn(workDir: String, limit: Int) {
     println("Opening…")
     val repository = git.repository(workDir)
-    //val map = mutableMapOf<String, Int>()
-    val namedMap = mutableMapOf<Pair<String, String>, Int>()
+    data class WhoAndWhere(val authorEmail: String = "", val filePath: String = "")
+    val modificationsByAuthor = mutableMapOf<WhoAndWhere, Int>()
     var count = 0
-    //val commits = repository.commits()
-    val myCommits = repository.myCommits()
-    //val limited = commits.take(limit)
-    val myLimited = myCommits.take(limit)
-    /*println("Calculating…")
-    limited.forEach { commit ->
-        if (count % 100 == 0)
-            println("Commit #$count [${commit.time.format()}]: ${commit.summary}")
-
-        commit.parents.forEach { parent ->
-            val diff = commit.tree.diff(parent.tree)
-            diff.deltas().forEach { delta ->
-                val path = delta.newPath
-                val n = map[path] ?: 0
-                map.put(path, n + 1)
-            }
-            diff.close()
-            parent.close()
-        }
-        commit.close()
-        count++
-    }
-    count = 0
-    */
+    val commits = repository.myCommits()
+    val commitsLimit = commits.take(limit)
     println("Calculating by my own way…")
-    myLimited.forEach { commit ->
+    commitsLimit.forEach { commit ->
         if (count % 100 == 0)
             println("Commit #$count [${commit.time.format()}] by ${commit.author.name!!.toKString()}: ${commit.summary}")
 
         commit.parents.forEach { parent ->
             val diff = commit.tree.diff(parent.tree)
             diff.deltas().forEach { delta ->
-                //val path = delta.newPath.dropLastWhile { it!='/' }
                 val path = if (delta.newPath == delta.newPath.substringBefore('/'))
                     delta.newPath
                 else
                     delta.newPath.substringBefore('/') + "/"
-                val n = namedMap[Pair(parent.author.email!!.toKString().toLowerCase(), path)] ?: 0
-                //map[path] = n + 1
-                namedMap[Pair(parent.author.email!!.toKString().toLowerCase(), path)] = n + 1
+                val n = modificationsByAuthor[WhoAndWhere(parent.author.email!!.toKString().toLowerCase(), path)] ?: 0
+                modificationsByAuthor[WhoAndWhere(parent.author.email!!.toKString().toLowerCase(), path)] = n + 1
             }
             diff.close()
             parent.close()
@@ -85,27 +61,16 @@ private fun calculateChurn(workDir: String, limit: Int) {
         commit.close()
         count++
     }
-
-    /*println("Report:")
-    map.toList().sortedByDescending { it.second }.take(10).forEach {
-        println("File: ${it.first}")
-        println("      ${it.second}")
-        println()
-    }*/
     println("Named Report:")
-
-    namedMap.toList().filter { it.second > 20 }.groupBy { it.first.first }.values.forEach {
-        println("Author: ${it[0].first.first}")
+    modificationsByAuthor.toList().filter { it.second > 20 }.groupBy { it.first.authorEmail }.values.forEach {
+        println("Author: ${it[0].first.authorEmail}")
         var changedFilesSum = 0
-        it.sortedByDescending { it.second }.forEach {
-
-    //namedMap.toList().sortedByDescending { it.second }.takeWhile { it.second > 20 }.forEach {
-        //println("Author: ${it.first.first}")
-            println("File: ${it.first.second}")
+        it.sortedByDescending { it.second }.forEach(fun(it: Pair<WhoAndWhere, Int>) {
+            println("File: ${it.first.filePath}")
             println("      ${it.second}")
             println()
-            changedFilesSum+=it.second
-        }
+            changedFilesSum += it.second
+        })
         println("Made $changedFilesSum modifications in total")
         println("________________________")
     }
