@@ -19,7 +19,6 @@ package org.jetbrains.kotlin.gradle.plugin.konan
 import org.gradle.api.Named
 import org.gradle.api.Project
 import org.gradle.api.file.FileCollection
-import org.jetbrains.kotlin.konan.target.Family
 import org.jetbrains.kotlin.konan.target.HostManager
 import org.jetbrains.kotlin.konan.target.KonanTarget
 import org.jetbrains.kotlin.konan.util.DependencyProcessor
@@ -73,20 +72,7 @@ internal abstract class KonanCliRunner(
             "java.library.path" to "${project.konanHome}/konan/nativelib"
     )
 
-    override val environment = mutableMapOf("LIBCLANG_DISABLE_CRASH_RECOVERY" to "1").apply {
-	// See https://docs.oracle.com/javase/10/vm/signal-chaining.htm
-        val jre = System.getProperty("java.home")
-        when (HostManager.host.family) {
-            Family.OSX -> {
-                put("DYLD_FORCE_FLAT_NAMESPACE", "0")
-                put("DYLD_INSERT_LIBRARIES", "$jre/lib/libjsig.dylib")
-            }
-            Family.LINUX -> {
-                put("LD_PRELOAD", "$jre/lib/libjsig.so")
-            }
-            else -> { /* No signal chaining required. */ }
-        }
-    }
+    override val environment = mutableMapOf("LIBCLANG_DISABLE_CRASH_RECOVERY" to "1")
 
     private fun String.escapeQuotes() = replace("\"", "\\\"")
 
