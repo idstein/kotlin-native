@@ -4,10 +4,10 @@ import org.jetbrains.kotlin.native.interop.gen.jvm.InteropConfiguration
 import org.jetbrains.kotlin.native.interop.gen.jvm.KotlinPlatform
 import org.jetbrains.kotlin.native.interop.indexer.*
 
+// TODO: Should it implement [StubContainer]?
 class StubIrContainer(
-        val classses: List<ClassStub>,
+        val classes: List<ClassStub>,
         val functions: List<FunctionalStub>,
-        val enums: List<EnumStub>,
         val globals: List<PropertyStub>,
         val typealiases: List<TypealiasStub>
 )
@@ -19,9 +19,8 @@ class StubIrBuilder(
         val imports: Imports
 ) {
 
-    private val classses = mutableListOf<ClassStub>()
+    private val classes = mutableListOf<ClassStub>()
     private val functions = mutableListOf<FunctionalStub>()
-    private val enums = mutableListOf<EnumStub>()
     private val globals = mutableListOf<PropertyStub>()
     private val typealiases = mutableListOf<TypealiasStub>()
 
@@ -42,13 +41,62 @@ class StubIrBuilder(
         nativeIndex.structs.forEach { generateStubsForStruct(it) }
         nativeIndex.functions.forEach { generateStubsForFunction(it) }
 
-        return StubIrContainer(classses, functions, enums, globals, typealiases)
+        return StubIrContainer(classes, functions, globals, typealiases)
     }
 
     private fun generateStubsForEnum(enumDef: EnumDef) {
         if (!enumDef.isStrictEnum) {
             generateEnumAsConstants(enumDef)
         }
+
+        val baseTypeMirror = mirror(enumDef.baseType)
+        val baseKotlinType = baseTypeMirror.argType
+
+        val canonicalsByValue = enumDef.constants
+                .groupingBy { it.value }
+                .reduce { _, accumulator, element ->
+                    if (element.isMoreCanonicalThan(accumulator)) {
+                        element
+                    } else {
+                        accumulator
+                    }
+                }
+
+        val (canonicalConstants, aliasConstants) = enumDef.constants.partition { canonicalsByValue[it.value] == it }
+
+        val clazz = (mirror(EnumType(enumDef)) as TypeMirror.ByValue).valueType.classifier
+
+        val enumVariants = canonicalConstants.map {
+            val literal = tryCreateIntegralStub(enumDef.baseType, it.value)
+                    ?: error("Cannot create enum value ${it.value} of type ${enumDef.baseType}")
+            EnumVariantStub(it.name.asSimpleName(), literal)
+        }
+
+        val companionStub = run {
+//            val properties = aliasConstants.forEach {
+//                val mainConstant = canonicalsByValue[it.value]!!
+//                out("val ${it.name.asSimpleName()} = ${mainConstant.name.asSimpleName()}")
+//                PropertyStub(it.name.asSimpleName(), WrapperStubType)
+//            }
+            //out("fun byValue(value: $baseKotlinType) = " +
+            //                        "${enumDef.kotlinName.asSimpleName()}.values().find { it.value == value }!!")
+            // TODO: Fill companion object.
+            CompanionStub(listOf(), listOf(), listOf())
+        }
+//        val VarClass = run {
+//            ClassStub()
+//        }
+//
+//        block("enum class ${kotlinFile.declare(clazz)}(override val value: $baseKotlinType) : CEnum") {
+//            block("class Var(rawPtr: NativePtr) : CEnumVar(rawPtr)") {
+//                val basePointedTypeName = baseTypeMirror.pointedType.render(kotlinFile)
+//                out("companion object : Type($basePointedTypeName.size.toInt())")
+//                out("var value: ${enumDef.kotlinName.asSimpleName()}")
+//                out("    get() = byValue(this.reinterpret<$basePointedTypeName>().value)")
+//                out("    set(value) { this.reinterpret<$basePointedTypeName>().value = value.value }")
+//            }
+//        }
+        classes += EnumStub(clazz, enumVariants, StubOrigin.Enum(enumDef), companion = companionStub)
     }
 
     /**
@@ -130,6 +178,12 @@ class StubIrBuilder(
                 this.typealiases += TypealiasStub(WrapperStubType(varType), WrapperStubType(varTypeAliasee))
             }
         }
+    }
+
+    private fun EnumConstant.isMoreCanonicalThan(other: EnumConstant): Boolean = with(other.name.toLowerCase()) {
+        contains("min") || contains("max") ||
+                contains("first") || contains("last") ||
+                contains("begin") || contains("end")
     }
 
     private fun generateStubsForGlobal(globalDecl: GlobalDecl) {

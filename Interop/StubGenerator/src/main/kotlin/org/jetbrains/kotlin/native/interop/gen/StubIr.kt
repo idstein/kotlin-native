@@ -1,10 +1,22 @@
 package org.jetbrains.kotlin.native.interop.gen
 
+import org.jetbrains.kotlin.native.interop.indexer.EnumDef
 import org.jetbrains.kotlin.native.interop.indexer.ObjCContainer
 
-// TODO: Consider adding StubContainer that holds some metainfo
-//  along with stubs. It would be useful for enums-as-constants or ObjC categories
-//  or any other grouping operation.
+class StubContainerMeta(
+        val textAtStart: String = "",
+        val textAtEnd: String = ""
+)
+
+// TODO: Looks like it should be splitted.
+interface StubContainer {
+    val meta: StubContainerMeta
+    val classes: List<ClassStub>
+    val functions: List<FunctionalStub>
+    val enums: List<EnumStub>
+    val properties: List<PropertyStub>
+    val typealiases: List<TypealiasStub>
+}
 
 interface StubType {
 }
@@ -41,6 +53,8 @@ sealed class StubOrigin {
     class ObjCClass(
             val clazz: org.jetbrains.kotlin.native.interop.indexer.ObjCClass
     ) : StubOrigin()
+
+    class Enum(val enum: EnumDef) : StubOrigin()
 }
 
 
@@ -97,19 +111,32 @@ enum class ClassStubModality {
 }
 
 // TODO: Separate into class and interface
-class ClassStub(
+open class ClassStub(
         val classifier: Classifier,
         override val origin: StubOrigin,
-        val properties: List<PropertyStub>,
+        override val properties: List<PropertyStub>,
         val methods: List<FunctionalStub>,
         val modality: ClassStubModality,
         val superTypes: List<StubType>,
-        val companion : CompanionStub? = null
-) : StubElementWithOrigin
+        val companion : CompanionStub? = null, // TODO: add to classes
+        override val classes: List<ClassStub> = emptyList(),
+        override val functions: List<FunctionalStub> = emptyList(),
+        override val meta: StubContainerMeta = StubContainerMeta()
+) : StubElementWithOrigin, StubContainer {
+    override val typealiases: List<TypealiasStub> = emptyList()
+    override val enums: List<EnumStub> = emptyList()
+}
 
 class CompanionStub(
-        val superTypes: List<StubType>
-) : StubElement
+        val superTypes: List<StubType> = emptyList(),
+        override val properties: List<PropertyStub> = emptyList(),
+        override val functions: List<FunctionalStub> = emptyList(),
+        override val meta: StubContainerMeta = StubContainerMeta()
+) : StubElement, StubContainer {
+    override val classes: List<ClassStub> = emptyList()
+    override val typealiases: List<TypealiasStub> = emptyList()
+    override val enums: List<EnumStub> = emptyList()
+}
 
 class FunctionParameterStub(
         val name: String,
@@ -168,15 +195,21 @@ class ConstructorStub(
         override val typeParameters: List<TypeParameterStub> = emptyList()
 ) : FunctionalStub
 
-class EnumElementStub(
-        val name: String
+class EnumVariantStub(
+        val name: String,
+        val value: ValueStub
 ) : StubElement
 
 class EnumStub(
-        val name: String,
-        val elements: List<EnumElementStub>,
-        override val origin: StubOrigin
-) : StubElementWithOrigin
+        classifier: Classifier,
+        val variants: List<EnumVariantStub>,
+        origin: StubOrigin,
+        properties: List<PropertyStub> = emptyList(),
+        methods: List<FunctionalStub> = emptyList(),
+        modality: ClassStubModality = ClassStubModality.NONE,
+        superTypes: List<StubType> = emptyList(),
+        companion: CompanionStub? = null
+) : ClassStub(classifier, origin, properties, methods, modality, superTypes, companion)
 
 class TypealiasStub(
         val alias: StubType,
