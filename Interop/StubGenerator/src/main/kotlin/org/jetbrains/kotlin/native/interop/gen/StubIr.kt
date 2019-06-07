@@ -9,11 +9,11 @@ class StubContainerMeta(
 )
 
 // TODO: Looks like it should be splitted.
+// TODO: Add generic sub-containers.
 interface StubContainer {
     val meta: StubContainerMeta
     val classes: List<ClassStub>
     val functions: List<FunctionalStub>
-    val enums: List<EnumStub>
     val properties: List<PropertyStub>
     val typealiases: List<TypealiasStub>
 }
@@ -58,7 +58,9 @@ sealed class StubOrigin {
 }
 
 
-interface StubElement
+interface StubElement {
+    fun accept(visitor: StubIrVisitor)
+}
 
 interface StubElementWithOrigin : StubElement {
     val origin: StubOrigin
@@ -72,7 +74,7 @@ interface TypeParametersHolder {
     val typeParameters: List<TypeParameterStub>
 }
 
-sealed class AnnotationStub : StubElement {
+sealed class AnnotationStub {
     sealed class ObjC : AnnotationStub() {
         object ConsumesReceiver : ObjC()
         object ReturnsRetained : ObjC()
@@ -102,7 +104,12 @@ class PropertyStub(
                 val getter: PropertyAccessor.Getter,
                 val setter: PropertyAccessor.Setter
         ) : Kind()
+
         class Constant(val value: ValueStub) : Kind()
+    }
+
+    override fun accept(visitor: StubIrVisitor) {
+        visitor.visitProperty(this)
     }
 }
 
@@ -124,7 +131,10 @@ open class ClassStub(
         override val meta: StubContainerMeta = StubContainerMeta()
 ) : StubElementWithOrigin, StubContainer {
     override val typealiases: List<TypealiasStub> = emptyList()
-    override val enums: List<EnumStub> = emptyList()
+
+    override fun accept(visitor: StubIrVisitor) {
+        visitor.visitClass(this)
+    }
 }
 
 class CompanionStub(
@@ -135,7 +145,10 @@ class CompanionStub(
 ) : StubElement, StubContainer {
     override val classes: List<ClassStub> = emptyList()
     override val typealiases: List<TypealiasStub> = emptyList()
-    override val enums: List<EnumStub> = emptyList()
+
+    override fun accept(visitor: StubIrVisitor) {
+        visitor.visitCompanion(this)
+    }
 }
 
 class FunctionParameterStub(
@@ -143,7 +156,7 @@ class FunctionParameterStub(
         val type: StubType,
         override val annotations: List<AnnotationStub>,
         isVararg: Boolean = false
-): StubElement, AnnotationHolder
+) : AnnotationHolder
 
 enum class MemberStubModality {
     OVERRIDE, OPEN, NONE, FINAL
@@ -174,6 +187,10 @@ sealed class PropertyAccessor() : FunctionalStub {
             override val typeParameters: List<TypeParameterStub> = emptyList(),
             val external: Boolean = false
     ) : PropertyAccessor()
+
+    override fun accept(visitor: StubIrVisitor) {
+        visitor.visitPropertyAccessor(this)
+    }
 }
 
 class FunctionStub(
@@ -187,18 +204,30 @@ class FunctionStub(
         val modality: MemberStubModality,
         override val typeParameters: List<TypeParameterStub> = emptyList()
 
-) : StubElementWithOrigin,  FunctionalStub
+) : StubElementWithOrigin,  FunctionalStub {
+    override fun accept(visitor: StubIrVisitor) {
+        visitor.visitFunction(this)
+    }
+}
 
 class ConstructorStub(
         override val parameters: List<FunctionParameterStub>,
         override val annotations: List<AnnotationStub>,
         override val typeParameters: List<TypeParameterStub> = emptyList()
-) : FunctionalStub
+) : FunctionalStub {
+    override fun accept(visitor: StubIrVisitor) {
+        visitor.visitConstructor(this)
+    }
+}
 
 class EnumVariantStub(
         val name: String,
         val value: ValueStub
-) : StubElement
+) : StubElement {
+    override fun accept(visitor: StubIrVisitor) {
+        visitor.visitEnumVariant(this)
+    }
+}
 
 class EnumStub(
         classifier: Classifier,
@@ -214,4 +243,8 @@ class EnumStub(
 class TypealiasStub(
         val alias: StubType,
         val aliasee: StubType
-) : StubElement
+) : StubElement {
+    override fun accept(visitor: StubIrVisitor) {
+        visitor.visitTypealias(this)
+    }
+}

@@ -5,12 +5,13 @@ import org.jetbrains.kotlin.native.interop.gen.jvm.KotlinPlatform
 import org.jetbrains.kotlin.native.interop.indexer.*
 
 // TODO: Should it implement [StubContainer]?
-class StubIrContainer(
-        val classes: List<ClassStub>,
-        val functions: List<FunctionalStub>,
-        val globals: List<PropertyStub>,
-        val typealiases: List<TypealiasStub>
-)
+class TopLevelContainer(
+        override val classes: List<ClassStub>,
+        override val functions: List<FunctionalStub>,
+        override val properties: List<PropertyStub>,
+        override val typealiases: List<TypealiasStub>,
+        override val meta: StubContainerMeta
+) : StubContainer
 
 class StubIrBuilder(
         val configuration: InteropConfiguration,
@@ -31,7 +32,7 @@ class StubIrBuilder(
 
     val generatedObjCCategoriesMembers = mutableMapOf<ObjCClass, GeneratedObjCCategoriesMembers>()
 
-    fun build(): StubIrContainer {
+    fun build(): TopLevelContainer {
         nativeIndex.objCProtocols.forEach { generateStubsForObjCProtocol(it) }
         nativeIndex.objCClasses.forEach { generateStubsForObjCClass(it) }
         nativeIndex.objCCategories.forEach { generateStubsForObjCCategory(it) }
@@ -41,7 +42,8 @@ class StubIrBuilder(
         nativeIndex.structs.forEach { generateStubsForStruct(it) }
         nativeIndex.functions.forEach { generateStubsForFunction(it) }
 
-        return StubIrContainer(classes, functions, globals, typealiases)
+        val meta = StubContainerMeta()
+        return TopLevelContainer(classes, functions, globals, typealiases, meta)
     }
 
     private fun generateStubsForEnum(enumDef: EnumDef) {
