@@ -8,7 +8,7 @@ class StubIrContainer(
         val classses: List<ClassStub>,
         val functions: List<FunctionalStub>,
         val enums: List<EnumStub>,
-        val globals: List<GlobalStub>,
+        val globals: List<PropertyStub>,
         val typealiases: List<TypealiasStub>
 )
 
@@ -22,16 +22,29 @@ class StubIrBuilder(
     private val classses = mutableListOf<ClassStub>()
     private val functions = mutableListOf<FunctionalStub>()
     private val enums = mutableListOf<EnumStub>()
-    private val globals = mutableListOf<GlobalStub>()
+    private val globals = mutableListOf<PropertyStub>()
     private val typealiases = mutableListOf<TypealiasStub>()
+
+    private var theCounter = 0
+    fun nextUniqueId() = theCounter++
+
+    val generatedObjCCategoriesMembers = mutableMapOf<ObjCClass, GeneratedObjCCategoriesMembers>()
 
     fun build(): StubIrContainer {
         nativeIndex.objCProtocols.forEach { generateStubsForObjCProtocol(it) }
+        nativeIndex.objCClasses.forEach { generateStubsForObjCClass(it) }
+        nativeIndex.objCCategories.forEach { generateStubsForObjCCategory(it) }
 
         return StubIrContainer(classses, functions, enums, globals, typealiases)
     }
 
     private fun generateStubsForObjCProtocol(objCProtocol: ObjCProtocol) {
+    }
+
+    private fun generateStubsForObjCClass(objCClass: ObjCClass) {
+    }
+
+    private fun generateStubsForObjCCategory(objCCategory: ObjCCategory) {
     }
 
     fun mirror(type: Type): TypeMirror = mirror(declarationMapper, type)
@@ -136,21 +149,25 @@ class StubIrBuilder(
         }
 }
 
+private interface StubElementBuilder {
+    fun build(): List<StubElement>
+}
+
 private class ObjCMethodBuilder(
         private val method: ObjCMethod,
         private val container: ObjCContainer,
         private val isDesignatedInitializer: Boolean,
         private val stubIrBuilder: StubIrBuilder
-) {
+) : StubElementBuilder {
     private val isStret: Boolean
     private val stubReturnType: StubType
-    private val annotations: List<AnnotationStub>
+    val annotations: List<AnnotationStub>
     private val parameters: List<FunctionParameterStub>
     private val external: Boolean
     private val receiverType: StubType?
     private val name: String = method.kotlinName
     private val origin = StubOrigin.ObjCMethod(method, container)
-    private val modality: FunctionStubModality
+    private val modality: MemberStubModality
 
     init {
         val returnType = method.getReturnType(container.classOrProtocol)
@@ -170,12 +187,12 @@ private class ObjCMethodBuilder(
         external = (container !is ObjCProtocol)
         modality = when (container) {
             is ObjCClassOrProtocol -> if (method.isOverride(container)) {
-                FunctionStubModality.OVERRIDE
+                MemberStubModality.OVERRIDE
             } else when (container) {
-                is ObjCClass -> FunctionStubModality.OPEN
-                is ObjCProtocol -> FunctionStubModality.NONE
+                is ObjCClass -> MemberStubModality.OPEN
+                is ObjCProtocol -> MemberStubModality.NONE
             }
-            is ObjCCategory -> FunctionStubModality.NONE
+            is ObjCCategory -> MemberStubModality.NONE
         }
         receiverType = if (container is ObjCCategory)
             WrapperStubType(stubIrBuilder.declarationMapper.getKotlinClassFor(container.clazz, isMeta = method.isClass).type)
@@ -188,7 +205,7 @@ private class ObjCMethodBuilder(
             AnnotationStub.ObjC.ReturnsRetained.takeIf { method.nsReturnsRetained }
     )
 
-    fun build(): List<FunctionalStub> {
+    override fun build(): List<FunctionalStub> {
         val results = mutableListOf<FunctionalStub>()
 
         results += FunctionStub(name, stubReturnType, parameters, origin, annotations, external, receiverType, modality)
@@ -226,7 +243,7 @@ private class ObjCMethodBuilder(
                         this.stubReturnType
                     }
                     val typeParameter = TypeParameterStub("T", WrapperStubType(clazz))
-                    val receiverType = ClassifierStubType(KotlinTypes.objCClassOf, listOf(typeParameter))
+                    val receiverType = WrapperStubType(KotlinTypes.objCClassOf.type, listOf(typeParameter))
                     val createMethod = FunctionStub(
                             "create",
                             returnType,
@@ -236,7 +253,7 @@ private class ObjCMethodBuilder(
                             external = true,
                             origin = StubOrigin.None,
                             annotations = annotations,
-                            modality = FunctionStubModality.NONE
+                            modality = MemberStubModality.NONE
                     )
                     results += createMethod
                 }
@@ -269,4 +286,224 @@ private fun ObjCMethod.getStubParameters(
         )
     }
     return result
+}
+
+private abstract class ObjCContainerBuilder(
+        stubIrBuilder: StubIrBuilder,
+        private val container: ObjCClassOrProtocol,
+        protected val metaContainerStub: ObjCContainerBuilder?
+) {
+    private val isMeta: Boolean get() = metaContainerStub == null
+
+    private val methods: List<ObjCMethod>
+    private val properties: List<ObjCProperty>
+
+    val protocolGetter: String?
+
+    init {
+        val superMethods = container.inheritedMethods(isMeta)
+
+        // Add all methods declared in the class or protocol:
+        var methods = container.declaredMethods(isMeta)
+
+        // Exclude those which are identically declared in super types:
+        methods -= superMethods
+
+        // Add some special methods from super types:
+        methods += superMethods.filter { it.returnsInstancetype() || it.isInit }
+
+        // Add methods inherited from multiple supertypes that must be defined according to Kotlin rules:
+        methods += container.immediateSuperTypes
+                .flatMap { superType ->
+                    val methodsWithInherited = superType.methodsWithInherited(isMeta).inheritedTo(container, isMeta)
+                    // Select only those which are represented as non-abstract in Kotlin:
+                    when (superType) {
+                        is ObjCClass -> methodsWithInherited
+                        is ObjCProtocol -> methodsWithInherited.filter { it.isOptional }
+                    }
+                }
+                .groupBy { it.selector }
+                .mapNotNull { (_, inheritedMethods) -> if (inheritedMethods.size > 1) inheritedMethods.first() else null }
+
+        this.methods = methods.distinctBy { it.selector }.toList()
+
+        this.properties = container.properties.filter { property ->
+            property.getter.isClass == isMeta &&
+                    // Select only properties that don't override anything:
+                    superMethods.none { property.getter.replaces(it) || property.setter?.replaces(it) ?: false }
+        }
+    }
+
+    private val methodBuilders get() = methodToStub.values
+
+    private val designatedInitializerSelectors = if (container is ObjCClass && !isMeta) {
+        container.getDesignatedInitializerSelectors(mutableSetOf())
+    } else {
+        emptySet()
+    }
+
+    private val methodToStub = methods.map {
+        it to ObjCMethodBuilder(it, container,
+                isDesignatedInitializer = it.selector in designatedInitializerSelectors,
+                stubIrBuilder = stubIrBuilder
+        )
+    }.toMap()
+
+    val propertyBuilders = properties.mapNotNull {
+        createObjCPropertyBuilder(stubIrBuilder, it, container, this.methodToStub)
+    }
+
+    val modality = when (container) {
+        is ObjCClass -> ClassStubModality.OPEN
+        is ObjCProtocol -> ClassStubModality.INTERFACE
+    }
+
+    val classifier = stubIrBuilder.declarationMapper.getKotlinClassFor(container, isMeta)
+
+    val externalObjCAnnotation = when (container) {
+        is ObjCProtocol -> {
+            protocolGetter = if (metaContainerStub != null) {
+                metaContainerStub.protocolGetter!!
+            } else {
+//                    val nativeBacked = object : NativeBacked {}
+                // TODO: handle the case when protocol getter stub can't be compiled.
+//                    genProtocolGetter(stubIrBuilder, nativeBacked, container)
+                // TODO: Decide, when to generaete Function name
+                "kniprot_" + stubIrBuilder.configuration.pkgName.replace('.', '_') + stubIrBuilder.nextUniqueId()
+            }
+            AnnotationStub.ObjC.ExternalClass(protocolGetter)
+        }
+        is ObjCClass -> {
+            protocolGetter = null
+            val binaryName = container.binaryName
+            AnnotationStub.ObjC.ExternalClass("", binaryName ?: "")
+        }
+    }
+
+    val supers = mutableListOf<StubType>()
+
+    init {
+        if (container is ObjCClass) {
+            val baseClass = container.baseClass
+            val baseClassifier = if (baseClass != null) {
+                stubIrBuilder.declarationMapper.getKotlinClassFor(baseClass, isMeta)
+            } else {
+                if (isMeta) KotlinTypes.objCObjectBaseMeta else KotlinTypes.objCObjectBase
+            }
+            supers += WrapperStubType(baseClassifier.type)
+        }
+        container.protocols.forEach {
+            supers += WrapperStubType(stubIrBuilder.declarationMapper.getKotlinClassFor(it, isMeta).type)
+        }
+        if (supers.isEmpty()) {
+            assert(container is ObjCProtocol)
+            val classifier = if (isMeta) KotlinTypes.objCObjectMeta else KotlinTypes.objCObject
+            supers += WrapperStubType(classifier.type)
+        }
+        if (!isMeta && container.isProtocolClass()) {
+            // TODO: map Protocol type to ObjCProtocol instead.
+            supers += WrapperStubType(KotlinTypes.objCProtocol.type)
+        }
+    }
+
+    fun buildBody(): Pair<List<PropertyStub>, List<FunctionalStub>> {
+        // TODO: add protected constructor if needed
+        return Pair(
+                propertyBuilders.flatMap { it.build() },
+                methodBuilders.flatMap { it.build() }
+        )
+    }
+}
+
+private open class ObjCClassOrProtocolBuilder(
+        stubIrBuilder: StubIrBuilder,
+        private val container: ObjCClassOrProtocol
+) : ObjCContainerBuilder(
+        stubIrBuilder,
+        container,
+        metaContainerStub = object : ObjCContainerBuilder(stubIrBuilder, container, metaContainerStub = null) {}
+)
+
+private class ObjCClassBuilder(
+        private val stubIrBuilder: StubIrBuilder,
+        private val clazz: ObjCClass
+) : ObjCClassOrProtocolBuilder(stubIrBuilder, clazz), StubElementBuilder {
+    override fun build(): List<StubElement> {
+        val companionSuper = stubIrBuilder.declarationMapper
+                .getKotlinClassFor(clazz, isMeta = true).type
+                .let { WrapperStubType(it) }
+
+        val objCClassType = KotlinTypes.objCClassOf.typeWith(
+                stubIrBuilder.declarationMapper.getKotlinClassFor(clazz, isMeta = false).type
+        ).let { WrapperStubType(it) }
+
+        val companion = CompanionStub(listOf(companionSuper, objCClassType))
+
+        val (properties, methods) = buildBody()
+
+        val classStub = ClassStub(
+                super.classifier,
+                StubOrigin.ObjCClass(clazz),
+                properties, methods, super.modality,
+                listOf(),
+                companion
+        )
+        return listOf(classStub)
+    }
+}
+
+private class ObjCCategoryBuilder(
+        private val stubIrBuilder: StubIrBuilder,
+        private val category: ObjCCategory
+) {
+    private val generatedMembers = stubIrBuilder.generatedObjCCategoriesMembers
+            .getOrPut(category.clazz, { GeneratedObjCCategoriesMembers() })
+
+    private val methodToBuilder = category.methods.filter { generatedMembers.register(it) }.map {
+        it to ObjCMethodBuilder(it, category, isDesignatedInitializer = false, stubIrBuilder = stubIrBuilder)
+    }.toMap()
+
+    private val methodBuilders get() = methodToBuilder.values
+
+    private val propertyBuilders = category.properties.filter { generatedMembers.register(it) }.mapNotNull {
+        createObjCPropertyBuilder(stubIrBuilder, it, category, methodToBuilder)
+    }
+}
+
+private fun createObjCPropertyBuilder(
+        stubIrBuilder: StubIrBuilder,
+        property: ObjCProperty,
+        container: ObjCContainer,
+        methodToStub: Map<ObjCMethod, ObjCMethodBuilder>
+): ObjCPropertyBuilder? {
+    // Note: the code below assumes that if the property is generated,
+    // then its accessors are also generated as explicit methods.
+    val getterStub = methodToStub[property.getter] ?: return null
+    val setterStub = property.setter?.let { methodToStub[it] ?: return null }
+    return ObjCPropertyBuilder(stubIrBuilder, property, container, getterStub, setterStub)
+}
+
+
+private class ObjCPropertyBuilder(
+        private val stubIrBuilder: StubIrBuilder,
+        private val property: ObjCProperty,
+        private val container: ObjCContainer,
+        private val getterBuilder: ObjCMethodBuilder,
+        private val setterMethod: ObjCMethodBuilder?
+) : StubElementBuilder {
+    override fun build(): List<PropertyStub> {
+        val type = property.getType(container.classOrProtocol)
+        val kotlinType = stubIrBuilder.mirror(type).argType
+        val getter = PropertyAccessor.Getter(external = true, annotations = getterBuilder.annotations)
+        val setter = property.setter?.let { PropertyAccessor.Setter(external = true, annotations = setterMethod!!.annotations) }
+        val kind = setter?.let { PropertyStub.Kind.Var(getter, it) } ?: PropertyStub.Kind.Val(getter)
+        val modality = if (container is ObjCProtocol) MemberStubModality.FINAL else MemberStubModality.NONE
+        val receiver = when (container) {
+            is ObjCClassOrProtocol -> null
+            is ObjCCategory -> stubIrBuilder.declarationMapper
+                    .getKotlinClassFor(container.clazz, isMeta = property.getter.isClass).type
+                    .let { WrapperStubType(it) }
+        }
+        return listOf(PropertyStub(property.name, WrapperStubType(kotlinType), kind, modality, receiver))
+    }
 }

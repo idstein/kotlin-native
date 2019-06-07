@@ -1,5 +1,6 @@
 package org.jetbrains.kotlin.native.interop.gen
 
+import org.jetbrains.kotlin.native.interop.indexer.ObjCClass
 import org.jetbrains.kotlin.native.interop.indexer.ObjCContainer
 
 interface StubType {
@@ -20,12 +21,6 @@ class WrapperStubType(
         override val typeParameters: List<TypeParameterStub> = emptyList()
 ) : StubType, TypeParametersHolder
 
-class ClassifierStubType(
-        val classifier: Classifier,
-        val parameters: List<TypeParameterStub> = emptyList(),
-        override val typeParameters: List<TypeParameterStub> = emptyList()
-) : StubType, TypeParametersHolder
-
 /**
  * Represents a source of StubIr element.
  */
@@ -38,6 +33,10 @@ sealed class StubOrigin {
     class ObjCMethod(
             val method: org.jetbrains.kotlin.native.interop.indexer.ObjCMethod,
             val container: ObjCContainer
+    ) : StubOrigin()
+
+    class ObjCClass(
+            val clazz: org.jetbrains.kotlin.native.interop.indexer.ObjCClass
     ) : StubOrigin()
 }
 
@@ -64,25 +63,46 @@ sealed class AnnotationStub : StubElement {
         class Factory(val selector: String, val encoding: String, val isStret: Boolean = false) : ObjC()
         object Consumed : ObjC()
         class Constructor(val selector: String, val designated: Boolean) : ObjC()
-
+        class ExternalClass(val protocolGetter: String = "", val binaryName: String = "")
     }
 }
 
 class PropertyStub(
         val name: String,
-        val type: StubType
-) : StubElement
+        val type: StubType,
+        val kind: Kind,
+        val modality: MemberStubModality,
+        val receiverType: StubType?
+) : StubElement {
+    sealed class Kind {
+        class Val(val getter: PropertyAccessor.Getter) : Kind()
+        class Var(
+                val getter: PropertyAccessor.Getter,
+                val setter: PropertyAccessor.Setter
+        ) : Kind()
+        // TODO: How to represent value?
+        class Constant() : Kind()
+    }
+}
 
+enum class ClassStubModality {
+    INTERFACE, OPEN, ABSTRACT, NONE
+}
+
+// TODO: Separate into class and interface
 class ClassStub(
-        val name: String,
+        val classifier: Classifier,
         override val origin: StubOrigin,
-        val fields: List<PropertyStub>
+        val properties: List<PropertyStub>,
+        val methods: List<FunctionalStub>,
+        val modality: ClassStubModality,
+        val superTypes: List<StubType>,
+        val companion : CompanionStub? = null
 ) : StubElementWithOrigin
 
-class GlobalStub(
-        val name: String,
-        override val origin: StubOrigin
-) : StubElementWithOrigin
+class CompanionStub(
+        val superTypes: List<StubType>
+) : StubElement
 
 class FunctionParameterStub(
         val name: String,
@@ -91,13 +111,28 @@ class FunctionParameterStub(
         isVararg: Boolean = false
 ): StubElement, AnnotationHolder
 
-enum class FunctionStubModality {
-    OVERRIDE, OPEN, NONE
+enum class MemberStubModality {
+    OVERRIDE, OPEN, NONE, FINAL
 }
 
 // TODO: Move here common fields of functions, methods and constructors.
-interface FunctionalStub : AnnotationHolder, TypeParametersHolder {
+interface FunctionalStub : AnnotationHolder, TypeParametersHolder, StubElement {
     val parameters: List<FunctionParameterStub>
+}
+
+sealed class PropertyAccessor() : FunctionalStub {
+    class Getter(
+            override val parameters: List<FunctionParameterStub> = emptyList(),
+            override val annotations: List<AnnotationStub> = emptyList(),
+            override val typeParameters: List<TypeParameterStub> = emptyList(),
+            val external: Boolean = false
+    ) : PropertyAccessor()
+    class Setter(
+            override val parameters: List<FunctionParameterStub> = emptyList(),
+            override val annotations: List<AnnotationStub> = emptyList(),
+            override val typeParameters: List<TypeParameterStub> = emptyList(),
+            val external: Boolean = false
+    ) : PropertyAccessor()
 }
 
 class FunctionStub(
@@ -108,7 +143,7 @@ class FunctionStub(
         override val annotations: List<AnnotationStub>,
         val external: Boolean = false,
         val receiverType: StubType?,
-        val modality: FunctionStubModality,
+        val modality: MemberStubModality,
         override val typeParameters: List<TypeParameterStub> = emptyList()
 
 ) : StubElementWithOrigin,  FunctionalStub

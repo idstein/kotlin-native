@@ -337,10 +337,10 @@ internal val ObjCMethod.kotlinName: String
         }
     }
 
-private val ObjCClassOrProtocol.protocolsWithSupers: Sequence<ObjCProtocol>
+internal val ObjCClassOrProtocol.protocolsWithSupers: Sequence<ObjCProtocol>
     get() = this.protocols.asSequence().flatMap { sequenceOf(it) + it.protocolsWithSupers }
 
-private val ObjCClassOrProtocol.immediateSuperTypes: Sequence<ObjCClassOrProtocol>
+internal val ObjCClassOrProtocol.immediateSuperTypes: Sequence<ObjCClassOrProtocol>
     get() {
         val baseClass = (this as? ObjCClass)?.baseClass
         if (baseClass != null) {
@@ -350,28 +350,28 @@ private val ObjCClassOrProtocol.immediateSuperTypes: Sequence<ObjCClassOrProtoco
         return this.protocols.asSequence()
     }
 
-private val ObjCClassOrProtocol.selfAndSuperTypes: Sequence<ObjCClassOrProtocol>
+internal val ObjCClassOrProtocol.selfAndSuperTypes: Sequence<ObjCClassOrProtocol>
     get() = sequenceOf(this) + this.superTypes
 
-private val ObjCClassOrProtocol.superTypes: Sequence<ObjCClassOrProtocol>
+internal val ObjCClassOrProtocol.superTypes: Sequence<ObjCClassOrProtocol>
     get() = this.immediateSuperTypes.flatMap { it.selfAndSuperTypes }.distinct()
 
-private fun ObjCClassOrProtocol.declaredMethods(isClass: Boolean): Sequence<ObjCMethod> =
+internal fun ObjCClassOrProtocol.declaredMethods(isClass: Boolean): Sequence<ObjCMethod> =
         this.methods.asSequence().filter { it.isClass == isClass }
 
 @Suppress("UNUSED_PARAMETER")
-private fun Sequence<ObjCMethod>.inheritedTo(container: ObjCClassOrProtocol, isMeta: Boolean): Sequence<ObjCMethod> =
+internal fun Sequence<ObjCMethod>.inheritedTo(container: ObjCClassOrProtocol, isMeta: Boolean): Sequence<ObjCMethod> =
         this // TODO: exclude methods that are marked as unavailable in [container].
 
-private fun ObjCClassOrProtocol.inheritedMethods(isClass: Boolean): Sequence<ObjCMethod> =
+internal fun ObjCClassOrProtocol.inheritedMethods(isClass: Boolean): Sequence<ObjCMethod> =
         this.immediateSuperTypes.flatMap { it.methodsWithInherited(isClass) }
                 .distinctBy { it.selector }
                 .inheritedTo(this, isClass)
 
-private fun ObjCClassOrProtocol.methodsWithInherited(isClass: Boolean): Sequence<ObjCMethod> =
+internal fun ObjCClassOrProtocol.methodsWithInherited(isClass: Boolean): Sequence<ObjCMethod> =
         (this.declaredMethods(isClass) + this.inheritedMethods(isClass)).distinctBy { it.selector }
 
-private fun ObjCClass.getDesignatedInitializerSelectors(result: MutableSet<String>): Set<String> {
+internal fun ObjCClass.getDesignatedInitializerSelectors(result: MutableSet<String>): Set<String> {
     // Note: Objective-C initializers act as usual methods and thus are inherited by subclasses.
     // Swift considers all super initializers to be available (unless otherwise specified explicitly),
     // but seems to consider them as non-designated if class declares its own ones explicitly.
@@ -696,7 +696,7 @@ private fun genProtocolGetter(
     return functionName
 }
 
-private fun ObjCClassOrProtocol.isProtocolClass(): Boolean = when (this) {
+internal fun ObjCClassOrProtocol.isProtocolClass(): Boolean = when (this) {
     is ObjCClass -> (name == "Protocol" || binaryName == "Protocol")
     is ObjCProtocol -> false
 }
