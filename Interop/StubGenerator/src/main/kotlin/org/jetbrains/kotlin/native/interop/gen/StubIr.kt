@@ -1,7 +1,10 @@
 package org.jetbrains.kotlin.native.interop.gen
 
-import org.jetbrains.kotlin.native.interop.indexer.ObjCClass
 import org.jetbrains.kotlin.native.interop.indexer.ObjCContainer
+
+// TODO: Consider adding StubContainer that holds some metainfo
+//  along with stubs. It would be useful for enums-as-constants or ObjC categories
+//  or any other grouping operation.
 
 interface StubType {
 }
@@ -67,6 +70,11 @@ sealed class AnnotationStub : StubElement {
     }
 }
 
+sealed class ValueStub
+class StringValueStub(val value: String) : ValueStub()
+class IntegralValueStub(val value: Long) : ValueStub()
+class DoubleValueStub(val value: Double) : ValueStub()
+
 class PropertyStub(
         val name: String,
         val type: StubType,
@@ -80,8 +88,7 @@ class PropertyStub(
                 val getter: PropertyAccessor.Getter,
                 val setter: PropertyAccessor.Setter
         ) : Kind()
-        // TODO: How to represent value?
-        class Constant() : Kind()
+        class Constant(val value: ValueStub) : Kind()
     }
 }
 
@@ -125,8 +132,15 @@ sealed class PropertyAccessor() : FunctionalStub {
             override val parameters: List<FunctionParameterStub> = emptyList(),
             override val annotations: List<AnnotationStub> = emptyList(),
             override val typeParameters: List<TypeParameterStub> = emptyList(),
-            val external: Boolean = false
-    ) : PropertyAccessor()
+            // TODO: Unify extenal and value since they are opposite properties.
+            val external: Boolean = false,
+            val value: ValueStub? = null
+    ) : PropertyAccessor() {
+        // Ugly test for now
+        init {
+            assert(external xor (value != null))
+        }
+    }
     class Setter(
             override val parameters: List<FunctionParameterStub> = emptyList(),
             override val annotations: List<AnnotationStub> = emptyList(),

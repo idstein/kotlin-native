@@ -28,6 +28,8 @@ class StubIrBuilder(
     private var theCounter = 0
     fun nextUniqueId() = theCounter++
 
+    private val macroConstantsByName = (nativeIndex.macroConstants + nativeIndex.wrappedMacros).associateBy { it.name }
+
     val generatedObjCCategoriesMembers = mutableMapOf<ObjCClass, GeneratedObjCCategoriesMembers>()
 
     fun build(): StubIrContainer {
@@ -44,7 +46,62 @@ class StubIrBuilder(
     }
 
     private fun generateStubsForEnum(enumDef: EnumDef) {
+        if (!enumDef.isStrictEnum) {
+            generateEnumAsConstants(enumDef)
+        }
+    }
 
+    /**
+     * Produces to [out] the Kotlin definitions for given enum which shouldn't be represented as Kotlin enum.
+     *
+     * @see isStrictEnum
+     */
+    private fun generateEnumAsConstants(e: EnumDef) {
+        // TODO: if this enum defines e.g. a type of struct field, then it should be generated inside the struct class
+        // to prevent name clashing
+
+        val constants = e.constants.filter {
+            // Macro "overrides" the original enum constant.
+            it.name !in macroConstantsByName
+        }
+
+        val kotlinType: KotlinType
+
+        val baseKotlinType = mirror(e.baseType).argType
+        if (e.isAnonymous) {
+            // TODO: Use StubContainer.
+//            if (constants.isNotEmpty()) {
+//                out("// ${e.spelling}:")
+//            }
+
+            kotlinType = baseKotlinType
+        } else {
+            val typeMirror = mirror(EnumType(e))
+            if (typeMirror !is TypeMirror.ByValue) {
+                error("unexpected enum type mirror: $typeMirror")
+            }
+
+            // Generate as typedef:
+            val varTypeName = typeMirror.info.constructPointedType(typeMirror.valueType)
+            val varTypeClassifier = typeMirror.pointedType
+            val valueTypeClassifier = typeMirror.valueType
+            typealiases += TypealiasStub(WrapperStubType(varTypeClassifier), WrapperStubType(varTypeName))
+            typealiases += TypealiasStub(WrapperStubType(valueTypeClassifier), WrapperStubType(baseKotlinType))
+
+            kotlinType = typeMirror.valueType
+        }
+
+        for (constant in constants) {
+            val literal = tryCreateIntegralStub(e.baseType, constant.value) ?: continue
+            val kind = PropertyStub.Kind.Val(PropertyAccessor.Getter(value = literal))
+            globals += PropertyStub(
+                    constant.name,
+                    WrapperStubType(kotlinType),
+                    kind,
+                    MemberStubModality.NONE,
+                    null
+            )
+        }
     }
 
     private fun generateStubsForFunction(functionDecl: FunctionDecl) {
@@ -60,23 +117,19 @@ class StubIrBuilder(
         val baseMirror = mirror(typedefDef.aliased)
 
         val varType = mirror.pointedType
-        val typealiases = when (baseMirror) {
+        when (baseMirror) {
             is TypeMirror.ByValue -> {
                 val valueType = (mirror as TypeMirror.ByValue).valueType
                 val varTypeAliasee = mirror.info.constructPointedType(valueType)
                 val valueTypeAliasee = baseMirror.valueType
-
-                listOf(
-                        TypealiasStub(WrapperStubType(varType), WrapperStubType(varTypeAliasee)),
-                        TypealiasStub(WrapperStubType(valueType), WrapperStubType(valueTypeAliasee))
-                )
+                this.typealiases += TypealiasStub(WrapperStubType(varType), WrapperStubType(varTypeAliasee))
+                this.typealiases += TypealiasStub(WrapperStubType(valueType), WrapperStubType(valueTypeAliasee))
             }
             is TypeMirror.ByRef -> {
                 val varTypeAliasee = baseMirror.pointedType
-                listOf(TypealiasStub(WrapperStubType(varType), WrapperStubType(varTypeAliasee)))
+                this.typealiases += TypealiasStub(WrapperStubType(varType), WrapperStubType(varTypeAliasee))
             }
         }
-        this.typealiases += typealiases
     }
 
     private fun generateStubsForGlobal(globalDecl: GlobalDecl) {
@@ -90,6 +143,12 @@ class StubIrBuilder(
     }
 
     private fun generateStubsForObjCCategory(objCCategory: ObjCCategory) {
+    }
+
+    // TODO: make it more robust
+    private fun tryCreateIntegralStub(type: Type, value: Long): IntegralValueStub? {
+        val integerType = type.unwrapTypedefs() as? IntegerType ?: return null
+        return IntegralValueStub(value)
     }
 
     fun mirror(type: Type): TypeMirror = mirror(declarationMapper, type)
