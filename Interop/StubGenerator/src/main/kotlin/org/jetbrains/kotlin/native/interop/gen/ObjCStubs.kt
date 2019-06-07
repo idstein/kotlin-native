@@ -20,7 +20,7 @@ import org.jetbrains.kotlin.konan.target.KonanTarget
 import org.jetbrains.kotlin.native.interop.gen.jvm.StubGenerator
 import org.jetbrains.kotlin.native.interop.indexer.*
 
-private fun ObjCMethod.getKotlinParameterNames(forConstructorOrFactory: Boolean = false): List<String> {
+internal fun ObjCMethod.getKotlinParameterNames(forConstructorOrFactory: Boolean = false): List<String> {
     val selectorParts = this.selector.split(":")
 
     val result = mutableListOf<String>()
@@ -253,7 +253,7 @@ private fun deprecated(message: String, replaceWith: String): String =
                 "ReplaceWith(${replaceWith.quoteAsKotlinLiteral()}), " +
                 "DeprecationLevel.ERROR)"
 
-private val ObjCContainer.classOrProtocol: ObjCClassOrProtocol
+internal val ObjCContainer.classOrProtocol: ObjCClassOrProtocol
     get() = when (this) {
         is ObjCClassOrProtocol -> this
         is ObjCCategory -> this.clazz
@@ -265,7 +265,7 @@ private val ObjCContainer.classOrProtocol: ObjCClassOrProtocol
  *
  * The entire implementation is just the real ABI approximation which is enough for practical cases.
  */
-private fun Type.isStret(target: KonanTarget): Boolean {
+internal fun Type.isStret(target: KonanTarget): Boolean {
     val unwrappedType = this.unwrapTypedefs()
     return when (target) {
         KonanTarget.IOS_ARM64 ->
@@ -325,7 +325,7 @@ private fun Type.hasUnalignedMembers(): Boolean = when (this) {
 // TODO: should the recursive checks be made in indexer when computing `hasUnalignedFields`?
 }
 
-private val ObjCMethod.kotlinName: String
+internal val ObjCMethod.kotlinName: String
     get() {
         val candidate = selector.split(":").first()
         val trimmed = candidate.trimEnd('_')
@@ -392,7 +392,7 @@ private fun ObjCClass.getDesignatedInitializerSelectors(result: MutableSet<Strin
     return result
 }
 
-private fun ObjCMethod.isOverride(container: ObjCClassOrProtocol): Boolean =
+internal fun ObjCMethod.isOverride(container: ObjCClassOrProtocol): Boolean =
         container.superTypes.any { superType -> superType.methods.any(this::replaces) }
 
 abstract class ObjCContainerStub(stubGenerator: StubGenerator,
