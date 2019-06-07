@@ -34,8 +34,53 @@ class StubIrBuilder(
         nativeIndex.objCProtocols.forEach { generateStubsForObjCProtocol(it) }
         nativeIndex.objCClasses.forEach { generateStubsForObjCClass(it) }
         nativeIndex.objCCategories.forEach { generateStubsForObjCCategory(it) }
+        nativeIndex.typedefs.forEach { generateStubsForTypedef(it) }
+        nativeIndex.globals.forEach { generateStubsForGlobal(it) }
+        nativeIndex.enums.forEach { generateStubsForEnum(it) }
+        nativeIndex.structs.forEach { generateStubsForStruct(it) }
+        nativeIndex.functions.forEach { generateStubsForFunction(it) }
 
         return StubIrContainer(classses, functions, enums, globals, typealiases)
+    }
+
+    private fun generateStubsForEnum(enumDef: EnumDef) {
+
+    }
+
+    private fun generateStubsForFunction(functionDecl: FunctionDecl) {
+
+    }
+
+    private fun generateStubsForStruct(struct: StructDecl) {
+
+    }
+
+    private fun generateStubsForTypedef(typedefDef: TypedefDef) {
+        val mirror = mirror(Typedef(typedefDef))
+        val baseMirror = mirror(typedefDef.aliased)
+
+        val varType = mirror.pointedType
+        val typealiases = when (baseMirror) {
+            is TypeMirror.ByValue -> {
+                val valueType = (mirror as TypeMirror.ByValue).valueType
+                val varTypeAliasee = mirror.info.constructPointedType(valueType)
+                val valueTypeAliasee = baseMirror.valueType
+
+                listOf(
+                        TypealiasStub(WrapperStubType(varType), WrapperStubType(varTypeAliasee)),
+                        TypealiasStub(WrapperStubType(valueType), WrapperStubType(valueTypeAliasee))
+                )
+            }
+            is TypeMirror.ByRef -> {
+                val varTypeAliasee = baseMirror.pointedType
+                listOf(TypealiasStub(WrapperStubType(varType), WrapperStubType(varTypeAliasee)))
+            }
+        }
+        this.typealiases += typealiases
+    }
+
+    private fun generateStubsForGlobal(globalDecl: GlobalDecl) {
+
     }
 
     private fun generateStubsForObjCProtocol(objCProtocol: ObjCProtocol) {
@@ -455,7 +500,7 @@ private class ObjCClassBuilder(
 private class ObjCCategoryBuilder(
         private val stubIrBuilder: StubIrBuilder,
         private val category: ObjCCategory
-) {
+) : StubElementBuilder {
     private val generatedMembers = stubIrBuilder.generatedObjCCategoriesMembers
             .getOrPut(category.clazz, { GeneratedObjCCategoriesMembers() })
 
@@ -468,6 +513,9 @@ private class ObjCCategoryBuilder(
     private val propertyBuilders = category.properties.filter { generatedMembers.register(it) }.mapNotNull {
         createObjCPropertyBuilder(stubIrBuilder, it, category, methodToBuilder)
     }
+
+    override fun build(): List<StubElement> =
+        methodBuilders.flatMap { it.build() } + propertyBuilders.flatMap { it.build() }
 }
 
 private fun createObjCPropertyBuilder(

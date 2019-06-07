@@ -165,5 +165,6 @@ class EnumStub(
 ) : StubElementWithOrigin
 
 class TypealiasStub(
-        val name: String
+        val alias: StubType,
+        val aliasee: StubType
 ) : StubElement
