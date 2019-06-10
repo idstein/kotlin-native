@@ -38,7 +38,7 @@ private fun calculateChurn(workDir: String, limit: Int) {
     data class WhoAndWhere(val authorEmail: String = "", val filePath: String = "")
     val modificationsByAuthor = mutableMapOf<WhoAndWhere, Int>()
     var count = 0
-    val commits = repository.myCommits().take(limit)
+    val commits = repository.commits().take(limit)
     println("Calculating…")
     commits.forEach { commit ->
         if (count % 100 == 0)

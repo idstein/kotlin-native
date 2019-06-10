@@ -14,7 +14,7 @@ import libgit2.*
  */
 class GitRevwalk (private val repository_handle: CPointer<git_repository>, val sort: git_sort_t) {
     private val arena = Arena()
-    private val handle: CPointer<git_revwalk> = memScoped {
+    private val handle = memScoped {
         val loc = allocPointerTo<git_revwalk>()
         git_revwalk_new(loc.ptr, repository_handle).errorCheck()
         loc.value!!
