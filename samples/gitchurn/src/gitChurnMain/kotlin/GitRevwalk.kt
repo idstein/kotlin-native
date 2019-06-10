@@ -12,9 +12,9 @@ import libgit2.*
 /**
  * This class provides revwalk functionality by wrapping imported C functions to be the one entity
  */
-class GitRevwalk (val repository_handle: CPointer<git_repository>, val sort: git_sort_t) {
-    val arena = Arena()
-    val handle: CPointer<git_revwalk> = memScoped {
+class GitRevwalk (private val repository_handle: CPointer<git_repository>, val sort: git_sort_t) {
+    private val arena = Arena()
+    private val handle: CPointer<git_revwalk> = memScoped {
         val loc = allocPointerTo<git_revwalk>()
         git_revwalk_new(loc.ptr, repository_handle).errorCheck()
         loc.value!!
@@ -42,10 +42,15 @@ class GitRevwalk (val repository_handle: CPointer<git_repository>, val sort: git
         git_revwalk_sorting(walk = handle, sort_mode = i)
     }
 
-    fun oid() : CPointer<git_oid>? { // here i can take iterated oids pointing to different commits, sorted by ^
+    fun nextCommit() : GitCommit? {
+        val commitPtr = arena.allocPointerTo<git_commit>()// here i can take iterated oids pointing to different commits, sorted by ^
         val o = arena.alloc<git_oid>()
         return when(val n = git_revwalk_next(o.ptr, handle)){
-            0 -> o.ptr
+            0 -> {
+                git_commit_lookup(commitPtr.ptr, repository_handle, o.ptr).errorCheck()
+                val commit = commitPtr.value!!
+                GitCommit(repository_handle, commit)
+            }
             GIT_ITEROVER -> null
             else -> throw Exception("Unexpected result code $n")
         }
