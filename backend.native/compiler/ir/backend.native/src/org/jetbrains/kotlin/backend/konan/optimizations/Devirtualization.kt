@@ -827,7 +827,7 @@ internal object Devirtualization {
                         val argument = argumentToConstraintNode(arguments[index])
                         argument.addEdge(parameter)
                     }
-                    return callee.returns
+                    return doCast(function, callee.returns, returnType)
                 }
 
                 fun doCall(callee: DataFlowIR.FunctionSymbol,
@@ -1370,11 +1370,11 @@ internal object Devirtualization {
 
         irModule.transformChildrenVoid(object: IrElementTransformerVoid() {
 
-            fun IrFunction.getCoercedClass(): IrClass {
+            fun IrFunction.getCoercedClass(): IrClassifierSymbol {
                 if (name.asString().endsWith("-box>"))
-                    return valueParameters[0].type.classifierOrFail.owner as IrClass
+                    return valueParameters[0].type.classifierOrFail
                 if (name.asString().endsWith("-unbox>"))
-                    return returnType.classifierOrFail.owner as IrClass
+                    return returnType.classifierOrFail
                 error("Unexpected coercion: ${this.dump()}")
             }
 
