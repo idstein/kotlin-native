@@ -38,10 +38,9 @@ private fun calculateChurn(workDir: String, limit: Int) {
     data class WhoAndWhere(val authorEmail: String = "", val filePath: String = "")
     val modificationsByAuthor = mutableMapOf<WhoAndWhere, Int>()
     var count = 0
-    val commits = repository.myCommits()
-    val commitsLimit = commits.take(limit)
+    val commits = repository.myCommits().take(limit)
     println("Calculating…")
-    commitsLimit.forEach { commit ->
+    commits.forEach { commit ->
         if (count % 100 == 0)
             println("Commit #$count [${commit.time.format()}] by ${commit.author.name!!.toKString()}: ${commit.summary}")
 
@@ -49,11 +48,12 @@ private fun calculateChurn(workDir: String, limit: Int) {
             val diff = commit.tree.diff(parent.tree)
             diff.deltas().forEach { delta ->
                 val path = if (delta.newPath == delta.newPath.substringBefore('/'))
-                    delta.newPath
-                else
-                    delta.newPath.substringBefore('/') + "/"
-                val n = modificationsByAuthor[WhoAndWhere(parent.author.email!!.toKString().toLowerCase(), path)] ?: 0
-                modificationsByAuthor[WhoAndWhere(parent.author.email!!.toKString().toLowerCase(), path)] = n + 1
+                        delta.newPath
+                    else
+                        delta.newPath.substringBefore('/') + "/"
+                val key = WhoAndWhere(commit.author.email!!.toKString().toLowerCase(), path)
+                val n = modificationsByAuthor[key] ?: 0
+                modificationsByAuthor[key] = n + 1
             }
             diff.close()
             parent.close()
@@ -62,15 +62,20 @@ private fun calculateChurn(workDir: String, limit: Int) {
         count++
     }
     println("Named Report:")
-    modificationsByAuthor.toList().groupBy { it.first.authorEmail }.values.forEach {
-        println("Author: ${it[0].first.authorEmail}")
+    modificationsByAuthor.toList().groupBy { it.first.authorEmail }.values.forEach { listOfAuthorsChanges ->
+        println("Author: ${listOfAuthorsChanges[0].first.authorEmail}")
         var changedFilesSum = 0
-        it.sortedByDescending { it.second }.forEach(fun(it: Pair<WhoAndWhere, Int>) {
-            println("File: ${it.first.filePath}")
-            println("      ${it.second}")
+        listOfAuthorsChanges.sortedByDescending { it.second }.forEach { change ->
+            if(change.first.filePath.contains("/")){
+                print("Dir:  ")
+            }else{
+                print("File: ")
+            }
+            println(change.first.filePath)
+            println("      ${change.second}")
             println()
-            changedFilesSum += it.second
-        })
+            changedFilesSum += change.second
+        }
         println("Made $changedFilesSum modifications in total")
         println("________________________")
     }
