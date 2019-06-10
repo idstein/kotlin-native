@@ -165,7 +165,7 @@ class StubIrBuilder(
 
         for (constant in constants) {
             val literal = tryCreateIntegralStub(e.baseType, constant.value) ?: continue
-            val kind = PropertyStub.Kind.Val(PropertyAccessor.Getter(value = literal))
+            val kind = PropertyStub.Kind.Val(PropertyAccessor.Getter.SimpleGetter(value = literal))
             globals += PropertyStub(
                     constant.name,
                     WrapperStubType(kotlinType),
@@ -177,80 +177,76 @@ class StubIrBuilder(
     }
 
     private fun generateStubsForFunction(func: FunctionDecl) {
-        try {
-            val parameters = mutableListOf<FunctionParameterStub>()
+        val parameters = mutableListOf<FunctionParameterStub>()
 
-            func.parameters.forEachIndexed { index, parameter ->
-                val parameterName = parameter.name.let {
-                    if (it == null || it.isEmpty()) {
-                        "arg$index"
-                    } else {
-                        it.asSimpleName()
-                    }
-                }
-
-                val representAsValuesRef = representCFunctionParameterAsValuesRef(parameter.type)
-
-                parameters += when {
-                    representCFunctionParameterAsString(func, parameter.type) -> {
-                        val annotations = when (platform) {
-                            KotlinPlatform.JVM -> emptyList()
-                            KotlinPlatform.NATIVE -> listOf(AnnotationStub.CCall.CString)
-                        }
-                        val type = WrapperStubType(KotlinTypes.string.makeNullable())
-                        FunctionParameterStub(parameterName, type, annotations)
-                    }
-                    representCFunctionParameterAsWString(func, parameter.type) -> {
-                        val annotations = when (platform) {
-                            KotlinPlatform.JVM -> emptyList()
-                            KotlinPlatform.NATIVE -> listOf(AnnotationStub.CCall.WCString)
-                        }
-                        val type = WrapperStubType(KotlinTypes.string.makeNullable())
-                        FunctionParameterStub(parameterName, type, annotations)
-                    }
-                    representAsValuesRef != null -> {
-                        FunctionParameterStub(parameterName, WrapperStubType(representAsValuesRef))
-                    }
-                    else -> {
-                        val mirror = mirror(parameter.type)
-                        val type = WrapperStubType(mirror.argType)
-                        FunctionParameterStub(parameterName, type)
-                    }
+        func.parameters.forEachIndexed { index, parameter ->
+            val parameterName = parameter.name.let {
+                if (it == null || it.isEmpty()) {
+                    "arg$index"
+                } else {
+                    it.asSimpleName()
                 }
             }
 
-            val returnType = WrapperStubType(if (func.returnsVoid()) {
-                KotlinTypes.unit
-            } else {
-                mirror(func.returnType).argType
-            })
+            val representAsValuesRef = representCFunctionParameterAsValuesRef(parameter.type)
 
-
-            val annotations: List<AnnotationStub>
-            val mustBeExternal: Boolean
-            if (!func.isVararg || platform != KotlinPlatform.NATIVE) {
-                annotations = emptyList()
-                mustBeExternal = false
-            } else {
-                val type = WrapperStubType(KotlinTypes.any.makeNullable())
-                parameters += FunctionParameterStub("variadicArguments", type, isVararg = true)
-                annotations = listOf(AnnotationStub.CCall.Symbol("knifunptr_" + pkgName.replace('.', '_') + nextUniqueId()))
-                mustBeExternal = true
+            parameters += when {
+                representCFunctionParameterAsString(func, parameter.type) -> {
+                    val annotations = when (platform) {
+                        KotlinPlatform.JVM -> emptyList()
+                        KotlinPlatform.NATIVE -> listOf(AnnotationStub.CCall.CString)
+                    }
+                    val type = WrapperStubType(KotlinTypes.string.makeNullable())
+                    FunctionParameterStub(parameterName, type, annotations)
+                }
+                representCFunctionParameterAsWString(func, parameter.type) -> {
+                    val annotations = when (platform) {
+                        KotlinPlatform.JVM -> emptyList()
+                        KotlinPlatform.NATIVE -> listOf(AnnotationStub.CCall.WCString)
+                    }
+                    val type = WrapperStubType(KotlinTypes.string.makeNullable())
+                    FunctionParameterStub(parameterName, type, annotations)
+                }
+                representAsValuesRef != null -> {
+                    FunctionParameterStub(parameterName, WrapperStubType(representAsValuesRef))
+                }
+                else -> {
+                    val mirror = mirror(parameter.type)
+                    val type = WrapperStubType(mirror.argType)
+                    FunctionParameterStub(parameterName, type)
+                }
             }
-            val functionStub = FunctionStub(
-                    func.name.asSimpleName(),
-                    returnType,
-                    parameters,
-                    StubOrigin.Function(func),
-                    annotations,
-                    mustBeExternal,
-                    null,
-                    MemberStubModality.NONE
-            )
-            functions += functionStub
-        } catch (e: Throwable) { // TODO: Catching throwable is a bad practice.
-            log("Warning: cannot generate stubs for function ${func.name}")
         }
+
+        val returnType = WrapperStubType(if (func.returnsVoid()) {
+            KotlinTypes.unit
+        } else {
+            mirror(func.returnType).argType
+        })
+
+
+        val annotations: List<AnnotationStub>
+        val mustBeExternal: Boolean
+        if (!func.isVararg || platform != KotlinPlatform.NATIVE) {
+            annotations = emptyList()
+            mustBeExternal = false
+        } else {
+            val type = WrapperStubType(KotlinTypes.any.makeNullable())
+            parameters += FunctionParameterStub("variadicArguments", type, isVararg = true)
+            annotations = listOf(AnnotationStub.CCall.Symbol("knifunptr_" + pkgName.replace('.', '_') + nextUniqueId()))
+            mustBeExternal = true
+        }
+        val functionStub = FunctionStub(
+                func.name.asSimpleName(),
+                returnType,
+                parameters,
+                StubOrigin.Function(func),
+                annotations,
+                mustBeExternal,
+                null,
+                MemberStubModality.NONE
+        )
+        functions += functionStub
     }
 
     private fun FunctionDecl.returnsVoid(): Boolean = this.returnType.unwrapTypedefs() is VoidType
@@ -293,8 +289,129 @@ class StubIrBuilder(
     private fun representCFunctionParameterAsWString(function: FunctionDecl, type: Type) = type.isAliasOf(platformWStringTypes)
             && !noStringConversion.contains(function.name)
 
-    private fun generateStubsForStruct(struct: StructDecl) {
+    private fun getArrayLength(type: ArrayType): Long {
+        val unwrappedElementType = type.elemType.unwrapTypedefs()
+        val elementLength = if (unwrappedElementType is ArrayType) {
+            getArrayLength(unwrappedElementType)
+        } else {
+            1L
+        }
 
+        val elementCount = when (type) {
+            is ConstArrayType -> type.length
+            is IncompleteArrayType -> 0L
+            else -> TODO(type.toString())
+        }
+
+        return elementLength * elementCount
+    }
+
+    private fun generateStubsForStruct(decl: StructDecl) {
+        val def = decl.def
+        if (def == null) {
+            generateForwardStruct(decl)
+            return
+        }
+
+        val structAnnotation: AnnotationStub? = if (platform == KotlinPlatform.JVM) {
+            if (def.kind == StructDef.Kind.STRUCT && def.fieldsHaveDefaultAlignment()) {
+                AnnotationStub.CNaturalStruct(def.members.joinToString { it.name.quoteAsKotlinLiteral() })
+            } else {
+                null
+            }
+        } else {
+            tryRenderStructOrUnion(def)?.let {
+                AnnotationStub.CStruct(it)
+            }
+        }
+        val classifier = declarationMapper.getKotlinClassForPointed(decl)
+
+        val fields: List<PropertyStub?> = def.fields.map { field ->
+            try {
+                assert(field.name.isNotEmpty())
+                assert(field.offset % 8 == 0L)
+                val offset = field.offset / 8
+                val fieldRefType = mirror(field.type)
+                val unwrappedFieldType = field.type.unwrapTypedefs()
+                if (unwrappedFieldType is ArrayType) {
+                    val type = (fieldRefType as TypeMirror.ByValue).valueType
+                    val annotations = if (platform == KotlinPlatform.JVM) {
+                        val length = getArrayLength(unwrappedFieldType)
+                        // TODO: @CLength should probably be used on types instead of properties.
+                        listOf(AnnotationStub.CLength(length))
+                    } else {
+                        emptyList()
+                    }
+                    val kind = PropertyStub.Kind.Val(PropertyAccessor.Getter.ArrayMemberAt(offset))
+                    // TODO: Should receiver be added?
+                    PropertyStub(field.name.asSimpleName(), WrapperStubType(type), kind, annotations = annotations)
+                } else {
+                    val pointedType = WrapperStubType(fieldRefType.pointedType)
+                    if (fieldRefType is TypeMirror.ByValue) {
+                        val kind = PropertyStub.Kind.Var(
+                                PropertyAccessor.Getter.MemberAt(offset, typeParameters = listOf(pointedType)),
+                                PropertyAccessor.Setter.MemberAt(offset, typeParameters = listOf(pointedType))
+                        )
+                        PropertyStub(field.name.asSimpleName(), WrapperStubType(fieldRefType.argType), kind)
+                    } else {
+                        val kind = PropertyStub.Kind.Val(PropertyAccessor.Getter.MemberAt(offset))
+                        PropertyStub(field.name.asSimpleName(), pointedType, kind)
+                    }
+                }
+            } catch (e: Throwable) {
+                log("Warning: cannot generate definition for field ${decl.kotlinName}.${field.name}")
+                null
+            }
+        }
+
+        val bitFields: List<PropertyStub> = def.bitFields.map { field ->
+            val typeMirror = mirror(field.type)
+            val typeInfo = typeMirror.info
+            val kotlinType = typeMirror.argType
+            val rawType = typeInfo.bridgedType
+            val signed = field.type.isIntegerTypeSigned()
+            // TODO: Type conversion?
+            val kind = PropertyStub.Kind.Var(
+                    PropertyAccessor.Getter.ReadBits(field.offset, field.size, signed),
+                    PropertyAccessor.Setter.WriteBits(field.offset, field.size)
+            )
+            PropertyStub(field.name.asSimpleName(), WrapperStubType(kotlinType), kind)
+        }
+
+        val companionStub = CompanionStub()
+
+        ClassStub(
+                classifier,
+                StubOrigin.Struct(decl),
+                fields.filterNotNull() + bitFields,
+                emptyList(),
+                ClassStubModality.NONE,
+                annotations = listOfNotNull(structAnnotation)
+        )
+
+
+//        block("class $kotlinName(rawPtr: NativePtr) : CStructVar(rawPtr)") {
+//            out("")
+//            out("companion object : Type(${def.size}, ${def.align})") // FIXME: align
+//            out("")
+//
+//        }
+    }
+
+    private tailrec fun Type.isIntegerTypeSigned(): Boolean = when (this) {
+        is IntegerType -> this.isSigned
+        is BoolType -> false
+        is EnumType -> this.def.baseType.isIntegerTypeSigned()
+        is Typedef -> this.def.aliased.isIntegerTypeSigned()
+        else -> error(this)
+    }
+
+    /**
+     * Produces to [out] the definition of Kotlin class representing the reference to given forward (incomplete) struct.
+     */
+    private fun generateForwardStruct(s: StructDecl) = when (platform) {
+        KotlinPlatform.JVM -> out("class ${s.kotlinName.asSimpleName()}(rawPtr: NativePtr) : COpaque(rawPtr)")
+        KotlinPlatform.NATIVE -> {}
     }
 
     private fun generateStubsForTypedef(typedefDef: TypedefDef) {
@@ -792,8 +909,8 @@ private class ObjCPropertyBuilder(
     override fun build(): List<PropertyStub> {
         val type = property.getType(container.classOrProtocol)
         val kotlinType = stubIrBuilder.mirror(type).argType
-        val getter = PropertyAccessor.Getter(external = true, annotations = getterBuilder.annotations)
-        val setter = property.setter?.let { PropertyAccessor.Setter(external = true, annotations = setterMethod!!.annotations) }
+        val getter = PropertyAccessor.Getter.SimpleGetter(external = true, annotations = getterBuilder.annotations)
+        val setter = property.setter?.let { PropertyAccessor.Setter.SimpleSetter(external = true, annotations = setterMethod!!.annotations) }
         val kind = setter?.let { PropertyStub.Kind.Var(getter, it) } ?: PropertyStub.Kind.Val(getter)
         val modality = if (container is ObjCProtocol) MemberStubModality.FINAL else MemberStubModality.NONE
         val receiver = when (container) {
