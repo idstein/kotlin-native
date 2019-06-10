@@ -6,6 +6,7 @@
 package sample.workers
 
 import kotlin.native.concurrent.*
+import platform.posix.*
 
 data class WorkerArgument(val intParam: Int, val stringParam: String)
 data class WorkerResult(val intResult: Int, val stringResult: String)
@@ -23,6 +24,9 @@ fun main() {
                 for (i in 0..input.intParam * 1000) {
                     sum += i
                 }
+                println("im gonna stop for a sec")
+                sleep(5)
+                println("lets go")
                 WorkerResult(sum, input.stringParam + " result")
             }
         }
