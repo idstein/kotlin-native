@@ -20,8 +20,12 @@ interface StubContainer {
     val typealiases: List<TypealiasStub>
 }
 
-interface StubType {
-}
+interface StubType
+
+/**
+ * Marks that abstract value of such type can be passed value.
+ */
+interface ValueStub
 
 class TypeParameterStub(
         val name: String,
@@ -113,10 +117,10 @@ sealed class AnnotationStub {
 /**
  * Compile-time known values.
  */
-sealed class ValueStub
-class StringValueStub(val value: String) : ValueStub()
-class IntegralValueStub(val value: Long) : ValueStub()
-class DoubleValueStub(val value: Double) : ValueStub()
+sealed class ConstantStub : ValueStub
+class StringConstantStub(val value: String) : ConstantStub()
+class IntegralConstantStub(val value: Long) : ConstantStub()
+class DoubleConstantStub(val value: Double) : ConstantStub()
 
 
 class PropertyStub(
@@ -134,7 +138,7 @@ class PropertyStub(
                 val setter: PropertyAccessor.Setter
         ) : Kind()
 
-        class Constant(val value: ValueStub) : Kind()
+        class Constant(val constant: ConstantStub) : Kind()
     }
 
     override fun accept(visitor: StubIrVisitor) {
@@ -146,16 +150,30 @@ enum class ClassStubModality {
     INTERFACE, OPEN, ABSTRACT, NONE
 }
 
+class ConstructorParamStub(val name: String, val type: StubType, val qualifier: Qualifier = Qualifier.NONE)
+    : ValueStub {
+    enum class Qualifier {
+        VAL, VAR, NONE
+    }
+}
+
+class SuperClassInit(
+        val type: StubType,
+        val parameters: List<ValueStub> = listOf()
+)
+
 // TODO: Separate into class and interface
+// TODO: Looks too complex.
 open class ClassStub(
         val classifier: Classifier,
         override val origin: StubOrigin,
         override val properties: List<PropertyStub>,
         val methods: List<FunctionalStub>,
         val modality: ClassStubModality,
-        // TODO: Split into superClass and interfaces
-        val superTypes: List<StubType>,
-        val companion : CompanionStub? = null, // TODO: add to classes
+        val constructorParams: List<ConstructorParamStub> = emptyList(),
+        // TODO: Add interfaces if needed,
+        val superClassInit: SuperClassInit? = null,
+        val companion : CompanionStub? = null, // TODO: add to classes in Stub
         override val classes: List<ClassStub> = emptyList(),
         override val functions: List<FunctionalStub> = emptyList(),
         override val meta: StubContainerMeta = StubContainerMeta(),
@@ -169,7 +187,8 @@ open class ClassStub(
 }
 
 class CompanionStub(
-        val superTypes: List<StubType> = emptyList(),
+        val superClassInit: SuperClassInit? = null,
+        val interfaces: List<StubType> = emptyList(),
         override val properties: List<PropertyStub> = emptyList(),
         override val functions: List<FunctionalStub> = emptyList(),
         override val meta: StubContainerMeta = StubContainerMeta()
@@ -187,7 +206,7 @@ class FunctionParameterStub(
         val type: StubType,
         override val annotations: List<AnnotationStub> = emptyList(),
         isVararg: Boolean = false
-) : AnnotationHolder
+) : AnnotationHolder, ValueStub
 
 enum class MemberStubModality {
     OVERRIDE, OPEN, NONE, FINAL
@@ -209,11 +228,11 @@ sealed class PropertyAccessor() : FunctionalStub {
                 override val typeParameters: List<StubType> = emptyList(),
                 // TODO: Unify extenal and value since they are opposite properties.
                 val external: Boolean = false,
-                val value: ValueStub? = null
+                val constant: ConstantStub? = null
         ) : Getter() {
             // Ugly test for now
             init {
-                assert(external xor (value != null))
+                assert(external xor (constant != null))
             }
         }
 
@@ -300,7 +319,7 @@ class ConstructorStub(
 
 class EnumVariantStub(
         val name: String,
-        val value: ValueStub
+        val constant: ConstantStub
 ) : StubElement {
     override fun accept(visitor: StubIrVisitor) {
         visitor.visitEnumVariant(this)
@@ -314,9 +333,10 @@ class EnumStub(
         properties: List<PropertyStub> = emptyList(),
         methods: List<FunctionalStub> = emptyList(),
         modality: ClassStubModality = ClassStubModality.NONE,
-        superTypes: List<StubType> = emptyList(),
+        constructorParams: List<ConstructorParamStub> = emptyList(),
+        superClassInit: SuperClassInit? = null,
         companion: CompanionStub? = null
-) : ClassStub(classifier, origin, properties, methods, modality, superTypes, companion)
+) : ClassStub(classifier, origin, properties, methods, modality, constructorParams, superClassInit, companion)
 
 class TypealiasStub(
         val alias: StubType,

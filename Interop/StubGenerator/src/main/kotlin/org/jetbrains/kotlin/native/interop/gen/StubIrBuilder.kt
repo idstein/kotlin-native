@@ -165,7 +165,7 @@ class StubIrBuilder(
 
         for (constant in constants) {
             val literal = tryCreateIntegralStub(e.baseType, constant.value) ?: continue
-            val kind = PropertyStub.Kind.Val(PropertyAccessor.Getter.SimpleGetter(value = literal))
+            val kind = PropertyStub.Kind.Val(PropertyAccessor.Getter.SimpleGetter(constant = literal))
             globals += PropertyStub(
                     constant.name,
                     WrapperStubType(kotlinType),
@@ -378,24 +378,26 @@ class StubIrBuilder(
             PropertyStub(field.name.asSimpleName(), WrapperStubType(kotlinType), kind)
         }
 
-        val companionStub = CompanionStub()
+        val superClass = SymbolicStubType("CStructVar")
+        val rawPtrConstructorParam = ConstructorParamStub("rawPtr", SymbolicStubType("NativePtr"))
+        val superClassInit = SuperClassInit(superClass, listOf(rawPtrConstructorParam))
+
+        // TODO: How we will differ Type and CStructVar.Type?
+        val companionSuper = SymbolicStubType("Type")
+        val companionSuperInit = SuperClassInit(companionSuper, listOf(IntegralConstantStub(def.size), IntegralConstantStub(def.align.toLong())))
+        val companion = CompanionStub(companionSuperInit)
 
         ClassStub(
                 classifier,
                 StubOrigin.Struct(decl),
                 fields.filterNotNull() + bitFields,
-                emptyList(),
-                ClassStubModality.NONE,
-                annotations = listOfNotNull(structAnnotation)
+                methods = emptyList(),
+                modality = ClassStubModality.NONE,
+                annotations = listOfNotNull(structAnnotation),
+                superClassInit = superClassInit,
+                constructorParams = listOf(rawPtrConstructorParam),
+                companion = companion
         )
-
-
-//        block("class $kotlinName(rawPtr: NativePtr) : CStructVar(rawPtr)") {
-//            out("")
-//            out("companion object : Type(${def.size}, ${def.align})") // FIXME: align
-//            out("")
-//
-//        }
     }
 
     private tailrec fun Type.isIntegerTypeSigned(): Boolean = when (this) {
@@ -410,7 +412,7 @@ class StubIrBuilder(
      * Produces to [out] the definition of Kotlin class representing the reference to given forward (incomplete) struct.
      */
     private fun generateForwardStruct(s: StructDecl) = when (platform) {
-        KotlinPlatform.JVM -> out("class ${s.kotlinName.asSimpleName()}(rawPtr: NativePtr) : COpaque(rawPtr)")
+        KotlinPlatform.JVM -> ("class ${s.kotlinName.asSimpleName()}(rawPtr: NativePtr) : COpaque(rawPtr)")
         KotlinPlatform.NATIVE -> {}
     }
 
@@ -454,9 +456,9 @@ class StubIrBuilder(
     }
 
     // TODO: make it more robust
-    private fun tryCreateIntegralStub(type: Type, value: Long): IntegralValueStub? {
+    private fun tryCreateIntegralStub(type: Type, value: Long): IntegralConstantStub? {
         val integerType = type.unwrapTypedefs() as? IntegerType ?: return null
-        return IntegralValueStub(value)
+        return IntegralConstantStub(value)
     }
 
     fun mirror(type: Type): TypeMirror = mirror(declarationMapper, type)
@@ -849,7 +851,8 @@ private class ObjCClassBuilder(
                 stubIrBuilder.declarationMapper.getKotlinClassFor(clazz, isMeta = false).type
         ).let { WrapperStubType(it) }
 
-        val companion = CompanionStub(listOf(companionSuper, objCClassType))
+        val superClassInit = SuperClassInit(companionSuper)
+        val companion = CompanionStub(superClassInit, listOf(objCClassType))
 
         val (properties, methods) = buildBody()
 
@@ -858,7 +861,7 @@ private class ObjCClassBuilder(
                 StubOrigin.ObjCClass(clazz),
                 properties, methods, super.modality,
                 listOf(),
-                companion
+                companion = companion
         )
         return listOf(classStub)
     }
