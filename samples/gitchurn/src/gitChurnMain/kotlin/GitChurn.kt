@@ -65,16 +65,16 @@ private fun calculateChurn(workDir: String, limit: Int) {
     modificationsByAuthor.toList().groupBy { it.first.authorEmail }.values.forEach { listOfAuthorsChanges ->
         println("Author: ${listOfAuthorsChanges[0].first.authorEmail}")
         var changedFilesSum = 0
-        listOfAuthorsChanges.sortedByDescending { it.second }.forEach { change ->
-            if(change.first.filePath.contains("/")){
+        listOfAuthorsChanges.sortedByDescending { it.second }.forEach { (modification, counter) ->
+            if(modification.filePath.contains("/")){
                 print("Dir:  ")
             }else{
                 print("File: ")
             }
-            println(change.first.filePath)
-            println("      ${change.second}")
+            println(modification.filePath)
+            println("      $counter")
             println()
-            changedFilesSum += change.second
+            changedFilesSum += counter
         }
         println("Made $changedFilesSum modifications in total")
         println("________________________")
