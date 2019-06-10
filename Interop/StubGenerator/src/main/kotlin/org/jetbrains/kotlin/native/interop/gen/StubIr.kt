@@ -1,6 +1,7 @@
 package org.jetbrains.kotlin.native.interop.gen
 
 import org.jetbrains.kotlin.native.interop.indexer.EnumDef
+import org.jetbrains.kotlin.native.interop.indexer.FunctionDecl
 import org.jetbrains.kotlin.native.interop.indexer.ObjCContainer
 
 class StubContainerMeta(
@@ -32,7 +33,6 @@ class TypeParameterStub(
  */
 class WrapperStubType(
         val kotlinType: KotlinType,
-        val parameters: List<TypeParameterStub> = emptyList(),
         override val typeParameters: List<TypeParameterStub> = emptyList()
 ) : StubType, TypeParametersHolder
 
@@ -55,6 +55,8 @@ sealed class StubOrigin {
     ) : StubOrigin()
 
     class Enum(val enum: EnumDef) : StubOrigin()
+
+    class Function(val function: FunctionDecl) : StubOrigin()
 }
 
 
@@ -83,6 +85,12 @@ sealed class AnnotationStub {
         object Consumed : ObjC()
         class Constructor(val selector: String, val designated: Boolean) : ObjC()
         class ExternalClass(val protocolGetter: String = "", val binaryName: String = "")
+    }
+
+    sealed class CCall : AnnotationStub() {
+        object CString : CCall()
+        object WCString : CCall()
+        class Symbol(val symbolName: String) : CCall()
     }
 }
 
@@ -154,7 +162,7 @@ class CompanionStub(
 class FunctionParameterStub(
         val name: String,
         val type: StubType,
-        override val annotations: List<AnnotationStub>,
+        override val annotations: List<AnnotationStub> = emptyList(),
         isVararg: Boolean = false
 ) : AnnotationHolder
 

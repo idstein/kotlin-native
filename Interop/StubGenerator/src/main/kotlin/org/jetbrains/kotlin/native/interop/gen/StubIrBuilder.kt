@@ -15,6 +15,7 @@ class TopLevelContainer(
 
 class StubIrBuilder(
         val configuration: InteropConfiguration,
+        val verbose: Boolean = false,
         val platform: KotlinPlatform,
         private val nativeIndex: NativeIndex,
         val imports: Imports
@@ -24,6 +25,27 @@ class StubIrBuilder(
     private val functions = mutableListOf<FunctionalStub>()
     private val globals = mutableListOf<PropertyStub>()
     private val typealiases = mutableListOf<TypealiasStub>()
+
+    private val platformWStringTypes = setOf("LPCWSTR")
+
+    private val noStringConversion: Set<String>
+        get() = configuration.noStringConversion
+
+    private fun Type.isAliasOf(names: Set<String>): Boolean {
+        var type = this
+        while (type is Typedef) {
+            if (names.contains(type.def.name)) return true
+            type = type.def.aliased
+        }
+        return false
+    }
+
+    // TODO: Use common logging system.
+    private fun log(message: String) {
+        if (verbose) {
+            println(message)
+        }
+    }
 
     private var theCounter = 0
     fun nextUniqueId() = theCounter++
@@ -154,9 +176,122 @@ class StubIrBuilder(
         }
     }
 
-    private fun generateStubsForFunction(functionDecl: FunctionDecl) {
+    private fun generateStubsForFunction(func: FunctionDecl) {
+        try {
+            val parameters = mutableListOf<FunctionParameterStub>()
 
+            func.parameters.forEachIndexed { index, parameter ->
+                val parameterName = parameter.name.let {
+                    if (it == null || it.isEmpty()) {
+                        "arg$index"
+                    } else {
+                        it.asSimpleName()
+                    }
+                }
+
+                val representAsValuesRef = representCFunctionParameterAsValuesRef(parameter.type)
+
+                parameters += when {
+                    representCFunctionParameterAsString(func, parameter.type) -> {
+                        val annotations = when (platform) {
+                            KotlinPlatform.JVM -> emptyList()
+                            KotlinPlatform.NATIVE -> listOf(AnnotationStub.CCall.CString)
+                        }
+                        val type = WrapperStubType(KotlinTypes.string.makeNullable())
+                        FunctionParameterStub(parameterName, type, annotations)
+                    }
+                    representCFunctionParameterAsWString(func, parameter.type) -> {
+                        val annotations = when (platform) {
+                            KotlinPlatform.JVM -> emptyList()
+                            KotlinPlatform.NATIVE -> listOf(AnnotationStub.CCall.WCString)
+                        }
+                        val type = WrapperStubType(KotlinTypes.string.makeNullable())
+                        FunctionParameterStub(parameterName, type, annotations)
+                    }
+                    representAsValuesRef != null -> {
+                        FunctionParameterStub(parameterName, WrapperStubType(representAsValuesRef))
+                    }
+                    else -> {
+                        val mirror = mirror(parameter.type)
+                        val type = WrapperStubType(mirror.argType)
+                        FunctionParameterStub(parameterName, type)
+                    }
+                }
+            }
+
+            val returnType = WrapperStubType(if (func.returnsVoid()) {
+                KotlinTypes.unit
+            } else {
+                mirror(func.returnType).argType
+            })
+
+
+            val annotations: List<AnnotationStub>
+            val mustBeExternal: Boolean
+            if (!func.isVararg || platform != KotlinPlatform.NATIVE) {
+                annotations = emptyList()
+                mustBeExternal = false
+            } else {
+                val type = WrapperStubType(KotlinTypes.any.makeNullable())
+                parameters += FunctionParameterStub("variadicArguments", type, isVararg = true)
+                annotations = listOf(AnnotationStub.CCall.Symbol("knifunptr_" + pkgName.replace('.', '_') + nextUniqueId()))
+                mustBeExternal = true
+            }
+            val functionStub = FunctionStub(
+                    func.name.asSimpleName(),
+                    returnType,
+                    parameters,
+                    StubOrigin.Function(func),
+                    annotations,
+                    mustBeExternal,
+                    null,
+                    MemberStubModality.NONE
+            )
+            functions += functionStub
+        } catch (e: Throwable) { // TODO: Catching throwable is a bad practice.
+            log("Warning: cannot generate stubs for function ${func.name}")
+        }
     }
+
+    private fun FunctionDecl.returnsVoid(): Boolean = this.returnType.unwrapTypedefs() is VoidType
+
+    private fun representCFunctionParameterAsValuesRef(type: Type): KotlinType? {
+        val pointeeType = when (type) {
+            is PointerType -> type.pointeeType
+            is ArrayType -> type.elemType
+            else -> return null
+        }
+
+        val unwrappedPointeeType = pointeeType.unwrapTypedefs()
+
+        if (unwrappedPointeeType is VoidType) {
+            // Represent `void*` as `CValuesRef<*>?`:
+            return KotlinTypes.cValuesRef.typeWith(StarProjection).makeNullable()
+        }
+
+        if (unwrappedPointeeType is FunctionType) {
+            // Don't represent function pointer as `CValuesRef<T>?` currently:
+            return null
+        }
+
+        if (unwrappedPointeeType is ArrayType) {
+            return representCFunctionParameterAsValuesRef(pointeeType)
+        }
+
+
+        return KotlinTypes.cValuesRef.typeWith(mirror(pointeeType).pointedType).makeNullable()
+    }
+
+    private fun representCFunctionParameterAsString(function: FunctionDecl, type: Type): Boolean {
+        val unwrappedType = type.unwrapTypedefs()
+        return unwrappedType is PointerType && unwrappedType.pointeeIsConst &&
+                unwrappedType.pointeeType.unwrapTypedefs() == CharType &&
+                !noStringConversion.contains(function.name)
+    }
+
+    // We take this approach as generic 'const short*' shall not be used as String.
+    private fun representCFunctionParameterAsWString(function: FunctionDecl, type: Type) = type.isAliasOf(platformWStringTypes)
+            && !noStringConversion.contains(function.name)
 
     private fun generateStubsForStruct(struct: StructDecl) {
 
