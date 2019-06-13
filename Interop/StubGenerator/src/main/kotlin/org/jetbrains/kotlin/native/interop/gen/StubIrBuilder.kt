@@ -6,7 +6,7 @@ import org.jetbrains.kotlin.native.interop.indexer.*
 
 // TODO: Should it implement [StubContainer]?
 class TopLevelContainer(
-        override val classes: List<ClassStub>,
+        override val classes: List<SimpleClassStub>,
         override val functions: List<FunctionalStub>,
         override val properties: List<PropertyStub>,
         override val typealiases: List<TypealiasStub>,
@@ -28,7 +28,7 @@ class StubIrBuilder(
         val imports: Imports
 ) {
 
-    private val classes = mutableListOf<ClassStub>()
+    private val classes = mutableListOf<SimpleClassStub>()
     private val functions = mutableListOf<FunctionalStub>()
     private val globals = mutableListOf<PropertyStub>()
     private val typealiases = mutableListOf<TypealiasStub>()
@@ -123,7 +123,7 @@ class StubIrBuilder(
 //                val superClassInit = SuperClassInit("Type", listOf(IntegralConstantStub(base)))
 //                CompanionStub()
 //            }
-//            ClassStub()
+//            SimpleClassStub()
 //        }
 //
 //        block("enum class ${kotlinFile.declare(clazz)}(override val value: $baseKotlinType) : CEnum") {
@@ -402,7 +402,7 @@ class StubIrBuilder(
         val companionSuperInit = SuperClassInit(companionSuper, listOf(IntegralConstantStub(def.size), IntegralConstantStub(def.align.toLong())))
         val companion = CompanionStub(companionSuperInit)
 
-        ClassStub(
+        SimpleClassStub(
                 classifier,
                 StubOrigin.Struct(decl),
                 fields.filterNotNull() + bitFields,
@@ -871,7 +871,7 @@ private class ObjCClassBuilder(
 
         val (properties, methods) = buildBody()
 
-        val classStub = ClassStub(
+        val classStub = SimpleClassStub(
                 super.classifier,
                 StubOrigin.ObjCClass(clazz),
                 properties, methods, super.modality,

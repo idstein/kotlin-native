@@ -1,6 +1,5 @@
 package org.jetbrains.kotlin.native.interop.gen
 
-import kotlinx.cinterop.CNaturalStruct
 import org.jetbrains.kotlin.native.interop.gen.jvm.InteropConfiguration
 import org.jetbrains.kotlin.native.interop.gen.jvm.KotlinPlatform
 import org.jetbrains.kotlin.native.interop.indexer.*
@@ -242,9 +241,9 @@ class StubIrTextEmitter(
             TODO("not implemented")
         }
 
-        override fun visitClass(element: ClassStub) {
-            block(renderClassHeader(element)) {
+        override fun visitClass(element: SimpleClassStub) {
 
+            block(renderClassHeader(element)) {
             }
         }
 
@@ -277,7 +276,8 @@ class StubIrTextEmitter(
         }
     }
 
-    private fun renderClassHeader(classStub: ClassStub): String {
+    private fun renderClassHeader(classStub: SimpleClassStub): String {
+
         val modality = renderClassStubModality(classStub.modality)
         val className = renderClassifier(classStub.classifier)
         val constructorParams = renderConstructorParams(classStub.constructorParams)
