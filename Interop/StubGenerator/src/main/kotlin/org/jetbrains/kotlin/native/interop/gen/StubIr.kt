@@ -12,7 +12,7 @@ class StubContainerMeta(
 
 // TODO: Looks like it should be splitted.
 // TODO: Add generic sub-containers (ex. for ObjC categories).
-interface StubContainer {
+interface StubContainer : StubElement {
     val meta: StubContainerMeta
     val classes: List<ClassStub>
     val functions: List<FunctionalStub>
@@ -20,18 +20,18 @@ interface StubContainer {
     val typealiases: List<TypealiasStub>
 }
 
-interface StubType
+sealed class StubType
 
 /**
  * Marks that abstract value of such type can be passed value.
  */
-interface ValueStub
+sealed class ValueStub
 
 class TypeParameterStub(
         val name: String,
         val upperBound: StubType? = null,
         val nullable: Boolean? = false
-) : StubType
+) : StubType()
 
 /**
  * Wrapper over [KotlinType].
@@ -39,15 +39,16 @@ class TypeParameterStub(
 class WrapperStubType(
         val kotlinType: KotlinType,
         override val typeParameters: List<StubType> = emptyList()
-) : StubType, TypeParametersHolder
+) : StubType(), TypeParametersHolder
 
 /**
  * Fallback variant for all cases where we cannot refer to specific [KotlinType].
  */
 class SymbolicStubType(
+        // TODO: use fq instead of just name.
         val name: String,
         override val typeParameters: List<StubType> = emptyList()
-) : StubType, TypeParametersHolder
+) : StubType(), TypeParametersHolder
 
 /**
  * Represents a source of StubIr element.
@@ -117,7 +118,7 @@ sealed class AnnotationStub {
 /**
  * Compile-time known values.
  */
-sealed class ConstantStub : ValueStub
+sealed class ConstantStub : ValueStub()
 class StringConstantStub(val value: String) : ConstantStub()
 class IntegralConstantStub(val value: Long) : ConstantStub()
 class DoubleConstantStub(val value: Double) : ConstantStub()
@@ -151,7 +152,7 @@ enum class ClassStubModality {
 }
 
 class ConstructorParamStub(val name: String, val type: StubType, val qualifier: Qualifier = Qualifier.NONE)
-    : ValueStub {
+    : ValueStub() {
     enum class Qualifier {
         VAL, VAR, NONE
     }
@@ -206,7 +207,7 @@ class FunctionParameterStub(
         val type: StubType,
         override val annotations: List<AnnotationStub> = emptyList(),
         isVararg: Boolean = false
-) : AnnotationHolder, ValueStub
+) : ValueStub(), AnnotationHolder
 
 enum class MemberStubModality {
     OVERRIDE, OPEN, NONE, FINAL

@@ -11,7 +11,14 @@ class TopLevelContainer(
         override val properties: List<PropertyStub>,
         override val typealiases: List<TypealiasStub>,
         override val meta: StubContainerMeta
-) : StubContainer
+) : StubContainer {
+    override fun accept(visitor: StubIrVisitor) {
+        classes.forEach { it.accept(visitor) }
+        functions.forEach { it.accept(visitor) }
+        properties.forEach { it.accept(visitor) }
+        typealiases.forEach { it.accept(visitor) }
+    }
+}
 
 class StubIrBuilder(
         val configuration: InteropConfiguration,
@@ -97,17 +104,25 @@ class StubIrBuilder(
         }
 
         val companionStub = run {
-//            val properties = aliasConstants.forEach {
-//                val mainConstant = canonicalsByValue[it.value]!!
+            val properties = aliasConstants.forEach {
+                val mainConstant = canonicalsByValue[it.value]!!
 //                out("val ${it.name.asSimpleName()} = ${mainConstant.name.asSimpleName()}")
 //                PropertyStub(it.name.asSimpleName(), WrapperStubType)
-//            }
+            }
             //out("fun byValue(value: $baseKotlinType) = " +
             //                        "${enumDef.kotlinName.asSimpleName()}.values().find { it.value == value }!!")
             // TODO: Fill companion object.
-            CompanionStub(listOf(), listOf(), listOf())
+            CompanionStub()
         }
-//        val VarClass = run {
+//        val varClass = run {
+//            val cEnumVarClass = SymbolicStubType("CEnumVar")
+//            val nativePtrType = SymbolicStubType("NativePtr")
+//            val rawPtr = ConstructorParamStub("rawPtr", nativePtrType)
+//            val superClassInit = SuperClassInit(cEnumVarClass, listOf(rawPtr))
+//            val varClassCompanion = run {
+//                val superClassInit = SuperClassInit("Type", listOf(IntegralConstantStub(base)))
+//                CompanionStub()
+//            }
 //            ClassStub()
 //        }
 //
