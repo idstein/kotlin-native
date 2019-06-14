@@ -202,15 +202,18 @@ private fun processCLib(args: Array<String>, additionalArgs: Map<String, Any> = 
     val excludedMacros = def.config.excludedMacros.toSet()
     val staticLibraries = def.config.staticLibraries + argParser.getValuesAsArray("staticLibrary")
     val libraryPaths = def.config.libraryPaths + argParser.getValuesAsArray("libraryPath")
-    val fqParts = (argParser.get<String>("pkg") ?: def.config.packageName)?.let {
-        it.split('.')
-    } ?: defFile!!.name.split('.').reversed().drop(1)
+    val fqParts = (argParser.get<String>("pkg") ?: def.config.packageName)?.split('.')
+            ?: defFile!!.name.split('.').reversed().drop(1)
 
     val outKtFileName = fqParts.last() + ".kt"
+    val outKtFileNameNew = fqParts.last()+ "_new" + ".kt"
 
     val outKtPkg = fqParts.joinToString(".")
     val outKtFileRelative = (fqParts + outKtFileName).joinToString("/")
     val outKtFile = File(ktGenRoot, outKtFileRelative)
+
+    val outKtFileRelativeNew = (fqParts + outKtFileNameNew).joinToString("/")
+    val outKtFileNew = File(ktGenRoot, outKtFileRelativeNew)
 
     val libName = (additionalArgs["cstubsname"] as? String)?: fqParts.joinToString("") + "stubs"
 
@@ -241,10 +244,19 @@ private fun processCLib(args: Array<String>, additionalArgs: Map<String, Any> = 
 
     File(nativeLibsDir).mkdirs()
     val outCFile = tempFiles.create(libName, ".${language.sourceFileExtension}")
+    val outCFileNew = tempFiles.create("${libName}_new", ".${language.sourceFileExtension}")
 
     outKtFile.bufferedWriter().use { ktFile ->
         File(outCFile.absolutePath).bufferedWriter().use { cFile ->
             gen.generateFiles(ktFile = ktFile, cFile = cFile, entryPoint = entryPoint)
+        }
+    }
+
+    val stubIrBuilder = StubIrBuilder(configuration, verbose, flavor, nativeIndex, imports)
+    val ir = stubIrBuilder.build()
+    outKtFileNew.bufferedWriter().use { ktFile ->
+        File(outCFileNew.absolutePath).bufferedWriter().use { cFile ->
+            StubIrTextEmitter(configuration, libName, flavor, ir, nativeIndex, ktFile, cFile, entryPoint, imports).emit()
         }
     }
 

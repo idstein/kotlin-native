@@ -10,7 +10,8 @@ class TopLevelContainer(
         override val functions: List<FunctionalStub>,
         override val properties: List<PropertyStub>,
         override val typealiases: List<TypealiasStub>,
-        override val meta: StubContainerMeta
+        override val meta: StubContainerMeta,
+        val declarationMapper: DeclarationMapper
 ) : StubContainer {
     override fun accept(visitor: StubIrVisitor) {
         classes.forEach { it.accept(visitor) }
@@ -54,6 +55,37 @@ class StubIrBuilder(
         }
     }
 
+    fun mirror(type: Type): TypeMirror = mirror(declarationMapper, type)
+
+    val declarationMapper = object : DeclarationMapper {
+        override fun getKotlinClassForPointed(structDecl: StructDecl): Classifier {
+            val baseName = structDecl.kotlinName
+            val pkg = when (platform) {
+                KotlinPlatform.JVM -> pkgName
+                KotlinPlatform.NATIVE -> if (structDecl.def == null) {
+                    cnamesStructsPackageName // to be imported as forward declaration.
+                } else {
+                    getPackageFor(structDecl)
+                }
+            }
+            return Classifier.topLevel(pkg, baseName)
+        }
+
+        override fun isMappedToStrict(enumDef: EnumDef): Boolean = enumDef.isStrictEnum
+
+        override fun getKotlinNameForValue(enumDef: EnumDef): String = enumDef.kotlinName
+
+        override fun getPackageFor(declaration: TypeDeclaration): String {
+            return imports.getPackage(declaration.location) ?: pkgName
+        }
+
+        override val useUnsignedTypes: Boolean
+            get() = when (platform) {
+                KotlinPlatform.JVM -> false
+                KotlinPlatform.NATIVE -> true
+            }
+    }
+
     private var theCounter = 0
     fun nextUniqueId() = theCounter++
 
@@ -72,12 +104,13 @@ class StubIrBuilder(
         nativeIndex.functions.forEach { generateStubsForFunction(it) }
 
         val meta = StubContainerMeta()
-        return TopLevelContainer(classes, functions, globals, typealiases, meta)
+        return TopLevelContainer(classes, functions, globals, typealiases, meta, declarationMapper)
     }
 
     private fun generateStubsForEnum(enumDef: EnumDef) {
         if (!enumDef.isStrictEnum) {
             generateEnumAsConstants(enumDef)
+            return
         }
 
         val baseTypeMirror = mirror(enumDef.baseType)
@@ -102,6 +135,10 @@ class StubIrBuilder(
                     ?: error("Cannot create enum value ${it.value} of type ${enumDef.baseType}")
             EnumVariantStub(it.name.asSimpleName(), literal)
         }
+
+        val valueParamStub = ConstructorParamStub("value", WrapperStubType(baseKotlinType), ConstructorParamStub.Qualifier.VAL(true))
+
+        val superClassInit = SuperClassInit(SymbolicStubType("CEnum"))
 
         val companionStub = run {
             val properties = aliasConstants.forEach {
@@ -135,7 +172,12 @@ class StubIrBuilder(
 //                out("    set(value) { this.reinterpret<$basePointedTypeName>().value = value.value }")
 //            }
 //        }
-        classes += ClassStub.Enum(clazz, enumVariants, origin = StubOrigin.Enum(enumDef), companion = companionStub)
+        classes += ClassStub.Enum(clazz, enumVariants,
+                origin = StubOrigin.Enum(enumDef),
+                companion = companionStub,
+                constructorParams = listOf(valueParamStub),
+                superClassInit = superClassInit
+        )
     }
 
     /**
@@ -474,37 +516,6 @@ class StubIrBuilder(
     private fun tryCreateIntegralStub(type: Type, value: Long): IntegralConstantStub? {
         val integerType = type.unwrapTypedefs() as? IntegerType ?: return null
         return IntegralConstantStub(value)
-    }
-
-    fun mirror(type: Type): TypeMirror = mirror(declarationMapper, type)
-
-    val declarationMapper = object : DeclarationMapper {
-        override fun getKotlinClassForPointed(structDecl: StructDecl): Classifier {
-            val baseName = structDecl.kotlinName
-            val pkg = when (platform) {
-                KotlinPlatform.JVM -> pkgName
-                KotlinPlatform.NATIVE -> if (structDecl.def == null) {
-                    cnamesStructsPackageName // to be imported as forward declaration.
-                } else {
-                    getPackageFor(structDecl)
-                }
-            }
-            return Classifier.topLevel(pkg, baseName)
-        }
-
-        override fun isMappedToStrict(enumDef: EnumDef): Boolean = enumDef.isStrictEnum
-
-        override fun getKotlinNameForValue(enumDef: EnumDef): String = enumDef.kotlinName
-
-        override fun getPackageFor(declaration: TypeDeclaration): String {
-            return imports.getPackage(declaration.location) ?: pkgName
-        }
-
-        override val useUnsignedTypes: Boolean
-            get() = when (platform) {
-                KotlinPlatform.JVM -> false
-                KotlinPlatform.NATIVE -> true
-            }
     }
 
     /**

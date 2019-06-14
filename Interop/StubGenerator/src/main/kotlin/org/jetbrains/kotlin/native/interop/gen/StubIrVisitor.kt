@@ -1,7 +1,6 @@
 package org.jetbrains.kotlin.native.interop.gen
 
 interface StubIrVisitor {
-    fun visit(element: StubElement)
 
     fun visitContainer(element: StubContainer)
 

@@ -21,7 +21,11 @@ interface StubContainer : StubElement {
 }
 
 val StubContainer.children: List<StubElement>
-    get() = classes + functions + properties + typealiases
+    get() {
+        val classes: List<StubElement> = classes
+        val funcs: List<StubElement> = functions
+        return classes + funcs + properties + typealiases
+    }
 
 sealed class StubType
 
@@ -33,7 +37,7 @@ sealed class ValueStub
 class TypeParameterStub(
         val name: String,
         val upperBound: StubType? = null,
-        val nullable: Boolean? = false
+        val nullable: Boolean = false
 ) : StubType()
 
 /**
@@ -156,8 +160,10 @@ enum class ClassStubModality {
 
 class ConstructorParamStub(val name: String, val type: StubType, val qualifier: Qualifier = Qualifier.NONE)
     : ValueStub() {
-    enum class Qualifier {
-        VAL, VAR, NONE
+    sealed class Qualifier {
+        class VAL(val overrides: Boolean) : Qualifier()
+        class VAR(val overrides: Boolean) : Qualifier()
+        object NONE : Qualifier()
     }
 }
 

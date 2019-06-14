@@ -2,6 +2,7 @@ package org.jetbrains.kotlin.native.interop.gen
 
 import org.jetbrains.kotlin.native.interop.gen.jvm.InteropConfiguration
 import org.jetbrains.kotlin.native.interop.gen.jvm.KotlinPlatform
+import org.jetbrains.kotlin.native.interop.gen.jvm.StubGenerator
 import org.jetbrains.kotlin.native.interop.indexer.*
 import java.lang.IllegalStateException
 
@@ -17,8 +18,16 @@ class StubIrTextEmitter(
         private val imports: Imports
 ) {
 
-//    private val ktOutput = TODO()
-//    private val cOutput = TODO()
+    private val ktOutput: (CharSequence) -> Appendable = ktFile::appendln
+    private val cOutput: (CharSequence) -> Appendable = cFile::appendln
+
+    /**
+     * The names that should not be used for struct classes to prevent name clashes
+     */
+    private val forbiddenStructNames = run {
+        val typedefNames = nativeIndex.typedefs.map { it.name }
+        typedefNames.toSet()
+    }
 
     private val pkgName: String
         get() = configuration.pkgName
@@ -48,34 +57,7 @@ class StubIrTextEmitter(
                     }
     )
 
-    private val declarationMapper = object : DeclarationMapper {
-        override fun getKotlinClassForPointed(structDecl: StructDecl): Classifier {
-            val baseName = structDecl.kotlinName
-            val pkg = when (platform) {
-                KotlinPlatform.JVM -> pkgName
-                KotlinPlatform.NATIVE -> if (structDecl.def == null) {
-                    cnamesStructsPackageName // to be imported as forward declaration.
-                } else {
-                    getPackageFor(structDecl)
-                }
-            }
-            return Classifier.topLevel(pkg, baseName)
-        }
-
-        override fun isMappedToStrict(enumDef: EnumDef): Boolean = enumDef.isStrictEnum
-
-        override fun getKotlinNameForValue(enumDef: EnumDef): String = enumDef.kotlinName
-
-        override fun getPackageFor(declaration: TypeDeclaration): String {
-            return imports.getPackage(declaration.location) ?: pkgName
-        }
-
-        override val useUnsignedTypes: Boolean
-            get() = when (platform) {
-                KotlinPlatform.JVM -> false
-                KotlinPlatform.NATIVE -> true
-            }
-    }
+    private val declarationMapper = stubs.declarationMapper
 
     private val kotlinFile = object : KotlinFile(pkgName, namesToBeDeclared = computeNamesToBeDeclared()) {
         override val mappingBridgeGenerator: MappingBridgeGenerator
@@ -103,9 +85,32 @@ class StubIrTextEmitter(
     }
 
 
-    private fun computeNamesToBeDeclared(): MutableList<String> {
-        return mutableListOf<String>("TODO()")
-    }
+    private fun computeNamesToBeDeclared(): MutableList<String> =
+            mutableListOf<String>().apply {
+                nativeIndex.typedefs.forEach {
+                    getTypeDeclaringNames(Typedef(it), this)
+                }
+
+                nativeIndex.objCProtocols.forEach {
+                    add(it.kotlinClassName(isMeta = false))
+                    add(it.kotlinClassName(isMeta = true))
+                }
+
+                nativeIndex.objCClasses.forEach {
+                    add(it.kotlinClassName(isMeta = false))
+                    add(it.kotlinClassName(isMeta = true))
+                }
+
+                nativeIndex.structs.forEach {
+                    getTypeDeclaringNames(RecordType(it), this)
+                }
+
+                nativeIndex.enums.forEach {
+                    if (!it.isAnonymous) {
+                        getTypeDeclaringNames(EnumType(it), this)
+                    }
+                }
+            }
 
     /**
      * Indicates whether this enum should be represented as Kotlin enum.
@@ -135,7 +140,7 @@ class StubIrTextEmitter(
     /**
      * The name to be used for this enum in Kotlin
      */
-    val EnumDef.kotlinName: String
+    private val EnumDef.kotlinName: String
         get() = if (spelling.startsWith("enum ")) {
             spelling.substringAfter(' ')
         } else {
@@ -143,15 +148,36 @@ class StubIrTextEmitter(
             spelling
         }
 
+    private fun mirror(type: Type): TypeMirror = mirror(declarationMapper, type)
+
     /**
-     * The names that should not be used for struct classes to prevent name clashes
+     * Finds all names to be declared for the given type declaration,
+     * and adds them to [result].
+     *
+     * TODO: refactor to compute these names directly from declarations.
      */
-    val forbiddenStructNames = run {
-        val typedefNames = nativeIndex.typedefs.map { it.name }
-        typedefNames.toSet()
+    private fun getTypeDeclaringNames(type: Type, result: MutableList<String>) {
+        if (type.unwrapTypedefs() == VoidType) {
+            return
+        }
+
+        val mirror = mirror(type)
+        val varClassifier = mirror.pointedType.classifier
+        if (varClassifier.pkg == pkgName) {
+            result.add(varClassifier.topLevelName)
+        }
+        when (mirror) {
+            is TypeMirror.ByValue -> {
+                val valueClassifier = mirror.valueType.classifier
+                if (valueClassifier.pkg == pkgName && valueClassifier.topLevelName != varClassifier.topLevelName) {
+                    result.add(valueClassifier.topLevelName)
+                }
+            }
+            is TypeMirror.ByRef -> {}
+        }
     }
 
-    val anonymousStructKotlinNames = mutableMapOf<StructDecl, String>()
+    private val anonymousStructKotlinNames = mutableMapOf<StructDecl, String>()
 
     /**
      * The name to be used for this struct in Kotlin
@@ -172,8 +198,11 @@ class StubIrTextEmitter(
             }
 
             // TODO: don't mangle struct names because it wouldn't work if the struct
-            // is imported into another interop library.
-            return if (strippedCName !in forbiddenStructNames) strippedCName else (strippedCName + "Struct")
+            //  is imported into another interop library.
+            return if (strippedCName !in forbiddenStructNames)
+                strippedCName
+            else
+                strippedCName + "Struct"
         }
 
     /**
@@ -184,7 +213,7 @@ class StubIrTextEmitter(
         throw IllegalStateException()
     }
 
-    fun <R> withOutput(output: (String) -> Unit, action: () -> R): R {
+    private fun <R> withOutput(output: (String) -> Unit, action: () -> R): R {
         val oldOut = out
         out = output
         try {
@@ -194,13 +223,13 @@ class StubIrTextEmitter(
         }
     }
 
-    fun generateLinesBy(action: () -> Unit): List<String> {
+    private fun generateLinesBy(action: () -> Unit): List<String> {
         val result = mutableListOf<String>()
         withOutput({ result.add(it) }, action)
         return result
     }
 
-    fun <R> withOutput(appendable: Appendable, action: () -> R): R {
+    private fun <R> withOutput(appendable: Appendable, action: () -> R): R {
         return withOutput({ appendable.appendln(it) }, action)
     }
 
@@ -225,58 +254,142 @@ class StubIrTextEmitter(
         return res
     }
 
+    private fun generateKotlinFileHeader() {
+        if (platform == KotlinPlatform.JVM) {
+            out("@file:JvmName(${jvmFileClassName.quoteAsKotlinLiteral()})")
+        }
+        if (platform == KotlinPlatform.NATIVE) {
+            out("@file:kotlinx.cinterop.InteropStubs")
+        }
+
+        val suppress = mutableListOf("UNUSED_VARIABLE", "UNUSED_EXPRESSION").apply {
+            if (configuration.library.language == Language.OBJECTIVE_C) {
+                add("CONFLICTING_OVERLOADS")
+                add("RETURN_TYPE_MISMATCH_ON_INHERITANCE")
+                add("PROPERTY_TYPE_MISMATCH_ON_INHERITANCE") // Multiple-inheriting property with conflicting types
+                add("VAR_TYPE_MISMATCH_ON_INHERITANCE") // Multiple-inheriting mutable property with conflicting types
+                add("RETURN_TYPE_MISMATCH_ON_OVERRIDE")
+                add("WRONG_MODIFIER_CONTAINING_DECLARATION") // For `final val` in interface.
+                add("PARAMETER_NAME_CHANGED_ON_OVERRIDE")
+                add("UNUSED_PARAMETER") // For constructors.
+                add("MANY_IMPL_MEMBER_NOT_IMPLEMENTED") // Workaround for multiple-inherited properties.
+                add("MANY_INTERFACES_MEMBER_NOT_IMPLEMENTED") // Workaround for multiple-inherited properties.
+                add("EXTENSION_SHADOWED_BY_MEMBER") // For Objective-C categories represented as extensions.
+                add("REDUNDANT_NULLABLE") // This warning appears due to Obj-C typedef nullability incomplete support.
+                add("DEPRECATION") // For uncheckedCast.
+                add("DEPRECATION_ERROR") // For initializers.
+            }
+        }
+
+        out("@file:Suppress(${suppress.joinToString { it.quoteAsKotlinLiteral() }})")
+        if (pkgName != "") {
+            val packageName = pkgName.split(".").joinToString("."){
+                if(it.matches(VALID_PACKAGE_NAME_REGEX)){
+                    it
+                }else{
+                    "`$it`"
+                }
+            }
+            out("package $packageName")
+            out("")
+        }
+        if (platform == KotlinPlatform.NATIVE) {
+            out("import kotlin.native.SymbolName")
+            out("import kotlinx.cinterop.internal.*")
+        }
+        out("import kotlinx.cinterop.*")
+
+        kotlinFile.buildImports().forEach {
+            out(it)
+        }
+
+        out("")
+
+        out("// NOTE THIS FILE IS AUTO-GENERATED")
+        out("")
+    }
+
     fun emit() {
         withOutput(ktFile) {
-
+            generateKotlinFileHeader()
+            printer.visitContainer(stubs)
         }
-        printer.visit(stubs)
     }
 
     private val printer = object : StubIrVisitor {
-        override fun visit(element: StubElement) {
-            TODO("not implemented")
+        override fun visitClass(element: ClassStub) {
+            element.annotations.forEach {
+                out(renderAnnotation(it))
+            }
+            val header = renderClassHeader(element)
+            block(header) {
+                if (element is ClassStub.Enum) {
+                    for (variant in element.variants) {
+                        out(renderEnumVariant(variant) + ",")
+                    }
+                    out(";")
+                }
+                visitContainer(element)
+            }
         }
 
         override fun visitContainer(element: StubContainer) {
-            TODO("not implemented")
+            element.children.forEach {
+                it.accept(this)
+            }
         }
 
         override fun visitTypealias(element: TypealiasStub) {
-            TODO("not implemented")
         }
 
         override fun visitFunction(element: FunctionStub) {
-            TODO("not implemented")
         }
 
         override fun visitProperty(element: PropertyStub) {
-            TODO("not implemented")
         }
 
         override fun visitEnumVariant(enumVariantStub: EnumVariantStub) {
-            TODO("not implemented")
         }
 
         override fun visitConstructor(constructorStub: ConstructorStub) {
-            TODO("not implemented")
         }
 
         override fun visitPropertyAccessor(propertyAccessor: PropertyAccessor) {
-            TODO("not implemented")
         }
     }
 
     private fun renderClassHeader(classStub: ClassStub): String {
 
-        val modality = renderClassStubModality(classStub.modality)
-        val className = renderClassifier(classStub.classifier)
-        val constructorParams = renderConstructorParams(classStub.constructorParams)
+        val modality = when (classStub) {
+            is ClassStub.Simple -> renderClassStubModality(classStub.modality)
+            is ClassStub.Companion -> ""
+            is ClassStub.Enum -> "enum class"
+        }
+        val className = when (classStub) {
+            is ClassStub.Simple -> declareClassifier(classStub.classifier)
+            is ClassStub.Companion -> "companion object"
+            is ClassStub.Enum -> declareClassifier(classStub.classifier)
+        }
+        val constructorParams = when (classStub) {
+            is ClassStub.Simple -> renderConstructorParams(classStub.constructorParams)
+            is ClassStub.Companion -> ""
+            is ClassStub.Enum -> renderConstructorParams(classStub.constructorParams)
+        }
+
         val superClassInit = classStub.superClassInit?.let { " : " + renderSuperInit(it) } ?: ""
 
-        return "$modality $className$superClassInit"
+        val interfaces = if (classStub.interfaces.isEmpty()) {
+            ""
+        } else {
+            classStub.interfaces.joinToString(prefix = if (superClassInit.isNotEmpty()) ", " else " ") {
+                renderStubType(it)
+            }
+        }
+
+        return "$modality $className$constructorParams$superClassInit$interfaces"
     }
 
-    private fun renderClassifier(classifier: Classifier): String {
+    private fun declareClassifier(classifier: Classifier): String {
         return kotlinFile.declare(classifier)
     }
 
@@ -296,8 +409,8 @@ class StubIrTextEmitter(
 
     private fun renderConstructorParameter(paramStub: ConstructorParamStub): String {
         val prefix = when (paramStub.qualifier) {
-            ConstructorParamStub.Qualifier.VAL -> "val "
-            ConstructorParamStub.Qualifier.VAR -> "var "
+            is ConstructorParamStub.Qualifier.VAL -> if (paramStub.qualifier.overrides) "override val " else "val "
+            is ConstructorParamStub.Qualifier.VAR -> if (paramStub.qualifier.overrides) "override var " else "var "
             ConstructorParamStub.Qualifier.NONE -> ""
         }
         return "$prefix${paramStub.name}: ${renderStubType(paramStub.type)}"
@@ -313,9 +426,13 @@ class StubIrTextEmitter(
     }
 
     private fun renderStubType(stubType: StubType): String = when (stubType) {
-        is TypeParameterStub -> TODO()
-        is WrapperStubType -> TODO()
-        is SymbolicStubType -> TODO()
+        is TypeParameterStub -> {
+            val nullableSymbol = if (stubType.nullable) "?" else ""
+            val upperBound = if (stubType.upperBound != null) " : " + renderStubType(stubType.upperBound) else ""
+            "${stubType.name}$nullableSymbol$upperBound"
+        }
+        is WrapperStubType -> stubType.kotlinType.render(kotlinFile)
+        is SymbolicStubType -> stubType.name
     }
 
     private fun renderValueUsage(value: ValueStub): String = when (value) {
@@ -340,4 +457,7 @@ class StubIrTextEmitter(
         is AnnotationStub.CNaturalStruct -> "@CNaturalStruct(${annotationStub.struct})"
         is AnnotationStub.CLength -> "@CLength(${annotationStub.length})"
     }
+
+    private fun renderEnumVariant(enumVariantStub: EnumVariantStub): String =
+            "${enumVariantStub.name}(${renderValueUsage(enumVariantStub.constant)})"
 }
