@@ -7,8 +7,6 @@ interface StubIrVisitor {
 
     fun visitClass(element: ClassStub)
 
-    fun visitCompanion(element: CompanionStub)
-
     fun visitTypealias(element: TypealiasStub)
 
     fun visitFunction(element: FunctionStub)

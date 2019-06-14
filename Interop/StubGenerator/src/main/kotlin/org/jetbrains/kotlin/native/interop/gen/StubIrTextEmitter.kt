@@ -241,16 +241,6 @@ class StubIrTextEmitter(
             TODO("not implemented")
         }
 
-        override fun visitClass(element: SimpleClassStub) {
-
-            block(renderClassHeader(element)) {
-            }
-        }
-
-        override fun visitCompanion(element: CompanionStub) {
-            TODO("not implemented")
-        }
-
         override fun visitTypealias(element: TypealiasStub) {
             TODO("not implemented")
         }
@@ -276,7 +266,7 @@ class StubIrTextEmitter(
         }
     }
 
-    private fun renderClassHeader(classStub: SimpleClassStub): String {
+    private fun renderClassHeader(classStub: ClassStub): String {
 
         val modality = renderClassStubModality(classStub.modality)
         val className = renderClassifier(classStub.classifier)

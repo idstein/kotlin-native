@@ -14,7 +14,7 @@ class StubContainerMeta(
 // TODO: Add generic sub-containers (ex. for ObjC categories).
 interface StubContainer : StubElement {
     val meta: StubContainerMeta
-    val classes: List<SimpleClassStub>
+    val classes: List<ClassStub>
     val functions: List<FunctionalStub>
     val properties: List<PropertyStub>
     val typealiases: List<TypealiasStub>
@@ -163,55 +163,59 @@ class ConstructorParamStub(val name: String, val type: StubType, val qualifier: 
 
 class SuperClassInit(
         val type: StubType,
-        val parameters: List<ValueStub> = listOf(),
+        val parameters: List<ValueStub> = listOf()
 )
 
-sealed class ClassStub(
-        override val properties: List<PropertyStub>,
-        override val origin: StubOrigin,
-        override val annotations: List<AnnotationStub> = emptyList(),
-        val childrenClasses: List<SimpleClassStub>,
-        val companion : CompanionStub? = null,
-        override val functions: List<FunctionalStub> = emptyList(),
-        override val meta: StubContainerMeta = StubContainerMeta()
-) : StubElementWithOrigin, StubContainer, AnnotationHolder {
+sealed class ClassStub : StubElementWithOrigin, StubContainer, AnnotationHolder {
+
+    abstract val superClassInit: SuperClassInit?
+    abstract val interfaces: List<StubType>
+    abstract val childrenClasses: List<ClassStub>
+    abstract val companion : Companion?
 
     class Simple(
             val classifier: Classifier,
             val modality: ClassStubModality,
-            properties: List<PropertyStub>,
-            origin: StubOrigin,
-            annotations: List<AnnotationStub> = emptyList(),
-            childrenClasses: List<SimpleClassStub>,
-            companion : CompanionStub? = null,
-            functions: List<FunctionalStub>
-    ) : ClassStub(properties, origin, annotations, childrenClasses, companion, functions) {
-
-    }
+            val constructorParams: List<ConstructorParamStub> = emptyList(),
+            override val superClassInit: SuperClassInit? = null,
+            override val interfaces: List<StubType> = emptyList(),
+            override val properties: List<PropertyStub> = emptyList(),
+            override val origin: StubOrigin,
+            override val annotations: List<AnnotationStub> = emptyList(),
+            override val childrenClasses: List<ClassStub> = emptyList(),
+            override val companion: Companion? = null,
+            override val functions: List<FunctionalStub> = emptyList()
+    ) : ClassStub()
 
     class Companion(
-            properties: List<PropertyStub>,
-            origin: StubOrigin,
-            annotations: List<AnnotationStub> = emptyList(),
-            childrenClasses: List<SimpleClassStub>,
-            companion : CompanionStub? = null,
-            functions: List<FunctionalStub>
-    ) : ClassStub(properties, origin, annotations, childrenClasses, companion, functions) {
+            override val superClassInit: SuperClassInit? = null,
+            override val interfaces: List<StubType> = emptyList(),
+            override val properties: List<PropertyStub> = emptyList(),
+            override val origin: StubOrigin = StubOrigin.None,
+            override val annotations: List<AnnotationStub> = emptyList(),
+            override val childrenClasses: List<ClassStub> = emptyList(),
+            override val functions: List<FunctionalStub> = emptyList()
+    ) : ClassStub() {
+        override val companion: Companion? = null
     }
 
     class Enum(
             val classifier: Classifier,
-            properties: List<PropertyStub>,
-            origin: StubOrigin,
-            annotations: List<AnnotationStub> = emptyList(),
-            childrenClasses: List<SimpleClassStub>,
-            companion : CompanionStub? = null,
-            functions: List<FunctionalStub>
-    ) : ClassStub(properties, origin, annotations, childrenClasses, companion, functions) {
+            val variants: List<EnumVariantStub>,
+            val constructorParams: List<ConstructorParamStub> = emptyList(),
+            override val superClassInit: SuperClassInit? = null,
+            override val interfaces: List<StubType> = emptyList(),
+            override val properties: List<PropertyStub> = emptyList(),
+            override val origin: StubOrigin,
+            override val annotations: List<AnnotationStub> = emptyList(),
+            override val childrenClasses: List<ClassStub> = emptyList(),
+            override val companion: Companion?= null,
+            override val functions: List<FunctionalStub> = emptyList()
+    ) : ClassStub()
 
-    }
+    override val meta: StubContainerMeta = StubContainerMeta()
 
-    override val classes: List<SimpleClassStub>
+    override val classes: List<ClassStub>
         get() = childrenClasses + listOfNotNull(companion)
 
     override fun accept(visitor: StubIrVisitor) {
@@ -219,56 +223,6 @@ sealed class ClassStub(
     }
 
     override val typealiases: List<TypealiasStub> = emptyList()
-}
-
-
-// TODO: Separate into class and interface
-// TODO: Looks too complex.
-open class SimpleClassStub(
-        val classifier: Classifier,
-        override val origin: StubOrigin,
-        override val properties: List<PropertyStub>,
-        val methods: List<FunctionalStub>,
-        val modality: ClassStubModality,
-        val constructorParams: List<ConstructorParamStub> = emptyList(),
-        // TODO: Add interfaces if needed,
-        val superClassInit: SuperClassInit? = null,
-        val interfaces: List<StubType> = emptyList(),
-        val companion : CompanionStub? = null,
-        override val functions: List<FunctionalStub> = emptyList(),
-        override val meta: StubContainerMeta = StubContainerMeta(),
-        override val annotations: List<AnnotationStub> = emptyList()
-) : StubElementWithOrigin, StubContainer, AnnotationHolder {
-    override val typealiases: List<TypealiasStub> = emptyList()
-
-    override val classes: List<SimpleClassStub> = listOfNotNull(companion)
-
-    override fun accept(visitor: StubIrVisitor) {
-        visitor.visitClass(this)
-    }
-}
-
-class CompanionStub(
-        superClassInit: SuperClassInit? = null,
-        properties: List<PropertyStub> = emptyList(),
-        override val functions: List<FunctionalStub> = emptyList(),
-        override val meta: StubContainerMeta = StubContainerMeta(),
-        override val annotations: List<AnnotationStub> = emptyList(),
-        methods: List<FunctionalStub>
-) : SimpleClassStub(
-        classifier = null,
-        superClassInit = superClassInit,
-        origin = StubOrigin.None,
-        modality = ClassStubModality.NONE,
-        methods = methods,
-        properties = properties
-) {
-    override val classes: List<SimpleClassStub> = emptyList()
-    override val typealiases: List<TypealiasStub> = emptyList()
-
-    override fun accept(visitor: StubIrVisitor) {
-        visitor.visitCompanion(this)
-    }
 }
 
 class FunctionParameterStub(
@@ -395,18 +349,6 @@ class EnumVariantStub(
         visitor.visitEnumVariant(this)
     }
 }
-
-class EnumStub(
-        classifier: Classifier,
-        val variants: List<EnumVariantStub>,
-        origin: StubOrigin,
-        properties: List<PropertyStub> = emptyList(),
-        methods: List<FunctionalStub> = emptyList(),
-        modality: ClassStubModality = ClassStubModality.NONE,
-        constructorParams: List<ConstructorParamStub> = emptyList(),
-        superClassInit: SuperClassInit? = null,
-        companion: CompanionStub? = null
-) : SimpleClassStub(classifier, origin, properties, methods, modality, constructorParams, superClassInit, companion = companion)
 
 class TypealiasStub(
         val alias: StubType,

@@ -6,7 +6,7 @@ import org.jetbrains.kotlin.native.interop.indexer.*
 
 // TODO: Should it implement [StubContainer]?
 class TopLevelContainer(
-        override val classes: List<SimpleClassStub>,
+        override val classes: List<ClassStub>,
         override val functions: List<FunctionalStub>,
         override val properties: List<PropertyStub>,
         override val typealiases: List<TypealiasStub>,
@@ -28,7 +28,7 @@ class StubIrBuilder(
         val imports: Imports
 ) {
 
-    private val classes = mutableListOf<SimpleClassStub>()
+    private val classes = mutableListOf<ClassStub>()
     private val functions = mutableListOf<FunctionalStub>()
     private val globals = mutableListOf<PropertyStub>()
     private val typealiases = mutableListOf<TypealiasStub>()
@@ -112,7 +112,7 @@ class StubIrBuilder(
             //out("fun byValue(value: $baseKotlinType) = " +
             //                        "${enumDef.kotlinName.asSimpleName()}.values().find { it.value == value }!!")
             // TODO: Fill companion object.
-            CompanionStub()
+            ClassStub.Companion()
         }
 //        val varClass = run {
 //            val cEnumVarClass = SymbolicStubType("CEnumVar")
@@ -135,7 +135,7 @@ class StubIrBuilder(
 //                out("    set(value) { this.reinterpret<$basePointedTypeName>().value = value.value }")
 //            }
 //        }
-        classes += EnumStub(clazz, enumVariants, StubOrigin.Enum(enumDef), companion = companionStub)
+        classes += ClassStub.Enum(clazz, enumVariants, origin = StubOrigin.Enum(enumDef), companion = companionStub)
     }
 
     /**
@@ -400,13 +400,13 @@ class StubIrBuilder(
         // TODO: How we will differ Type and CStructVar.Type?
         val companionSuper = SymbolicStubType("Type")
         val companionSuperInit = SuperClassInit(companionSuper, listOf(IntegralConstantStub(def.size), IntegralConstantStub(def.align.toLong())))
-        val companion = CompanionStub(companionSuperInit)
+        val companion = ClassStub.Companion(companionSuperInit)
 
-        SimpleClassStub(
+        ClassStub.Simple(
                 classifier,
-                StubOrigin.Struct(decl),
-                fields.filterNotNull() + bitFields,
-                methods = emptyList(),
+                origin = StubOrigin.Struct(decl),
+                properties = fields.filterNotNull() + bitFields,
+                functions = emptyList(),
                 modality = ClassStubModality.NONE,
                 annotations = listOfNotNull(structAnnotation),
                 superClassInit = superClassInit,
@@ -867,15 +867,16 @@ private class ObjCClassBuilder(
         ).let { WrapperStubType(it) }
 
         val superClassInit = SuperClassInit(companionSuper)
-        val companion = CompanionStub(superClassInit, listOf(objCClassType))
+        val companion = ClassStub.Companion(superClassInit, listOf(objCClassType))
 
         val (properties, methods) = buildBody()
 
-        val classStub = SimpleClassStub(
+        val classStub = ClassStub.Simple(
                 super.classifier,
-                StubOrigin.ObjCClass(clazz),
-                properties, methods, super.modality,
-                listOf(),
+                origin = StubOrigin.ObjCClass(clazz),
+                properties = properties,
+                functions = methods,
+                modality = super.modality,
                 companion = companion
         )
         return listOf(classStub)
