@@ -222,7 +222,7 @@ class StubIrBuilder(
 
         for (constant in constants) {
             val literal = tryCreateIntegralStub(e.baseType, constant.value) ?: continue
-            val kind = PropertyStub.Kind.Val(PropertyAccessor.Getter.SimpleGetter(constant = literal))
+            val kind = PropertyStub.Kind.Constant(literal)
             globals += PropertyStub(
                     constant.name,
                     WrapperStubType(kotlinType),
@@ -939,8 +939,8 @@ private class ObjCPropertyBuilder(
     override fun build(): List<PropertyStub> {
         val type = property.getType(container.classOrProtocol)
         val kotlinType = stubIrBuilder.mirror(type).argType
-        val getter = PropertyAccessor.Getter.SimpleGetter(external = true, annotations = getterBuilder.annotations)
-        val setter = property.setter?.let { PropertyAccessor.Setter.SimpleSetter(external = true, annotations = setterMethod!!.annotations) }
+        val getter = PropertyAccessor.Getter.ExternalGetter(annotations = getterBuilder.annotations)
+        val setter = property.setter?.let { PropertyAccessor.Setter.ExternalSetter(annotations = setterMethod!!.annotations) }
         val kind = setter?.let { PropertyStub.Kind.Var(getter, it) } ?: PropertyStub.Kind.Val(getter)
         val modality = if (container is ObjCProtocol) MemberStubModality.FINAL else MemberStubModality.NONE
         val receiver = when (container) {

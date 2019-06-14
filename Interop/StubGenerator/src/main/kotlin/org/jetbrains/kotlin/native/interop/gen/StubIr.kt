@@ -253,50 +253,62 @@ sealed class PropertyAccessor() : FunctionalStub {
 
     sealed class Getter : PropertyAccessor() {
         class SimpleGetter(
-                override val parameters: List<FunctionParameterStub> = emptyList(),
                 override val annotations: List<AnnotationStub> = emptyList(),
-                override val typeParameters: List<StubType> = emptyList(),
-                // TODO: Unify extenal and value since they are opposite properties.
-                val external: Boolean = false,
-                val constant: ConstantStub? = null
+                val constant: ConstantStub? = null // TODO: Looks like it should be dropped
         ) : Getter() {
-            // Ugly test for now
-            init {
-                assert(external xor (constant != null))
-            }
+            override val parameters: List<FunctionParameterStub> = emptyList()
+            override val typeParameters: List<StubType> = emptyList()
+        }
+
+        class ExternalGetter(
+                override val annotations: List<AnnotationStub> = emptyList()
+        ) : Getter() {
+            override val parameters: List<FunctionParameterStub> = emptyList()
+            override val typeParameters: List<StubType> = emptyList()
         }
 
         class ArrayMemberAt(
-                val offset: Long,
-                override val parameters: List<FunctionParameterStub> = emptyList(),
-                override val annotations: List<AnnotationStub> = emptyList(),
-                override val typeParameters: List<StubType> = emptyList()
-        ) : Getter()
+                val offset: Long
+        ) : Getter() {
+            override val parameters: List<FunctionParameterStub> = emptyList()
+            override val annotations: List<AnnotationStub> = emptyList()
+            override val typeParameters: List<StubType> = emptyList()
+        }
 
         class MemberAt(
                 val offset: Long,
-                override val parameters: List<FunctionParameterStub> = emptyList(),
-                override val annotations: List<AnnotationStub> = emptyList(),
                 override val typeParameters: List<StubType> = emptyList()
-        ) : Getter()
+        ) : Getter() {
+            override val parameters: List<FunctionParameterStub> = emptyList()
+            override val annotations: List<AnnotationStub> = emptyList()
+        }
 
         class ReadBits(
                 val offset: Long,
                 val size: Int,
-                val signed: Boolean,
-                override val parameters: List<FunctionParameterStub> = emptyList(),
-                override val annotations: List<AnnotationStub> = emptyList(),
-                override val typeParameters: List<StubType> = emptyList()
-        ) : Getter()
+                val signed: Boolean
+        ) : Getter() {
+            override val parameters: List<FunctionParameterStub> = emptyList()
+            override val annotations: List<AnnotationStub> = emptyList()
+            override val typeParameters: List<StubType> = emptyList()
+        }
     }
 
     sealed class Setter : PropertyAccessor() {
         class SimpleSetter(
                 override val parameters: List<FunctionParameterStub> = emptyList(),
                 override val annotations: List<AnnotationStub> = emptyList(),
-                override val typeParameters: List<StubType> = emptyList(),
                 val external: Boolean = false
-        ) : Setter()
+        ) : Setter() {
+            override val typeParameters: List<StubType> = emptyList()
+        }
+
+        class ExternalSetter(
+                override val parameters: List<FunctionParameterStub> = emptyList(),
+                override val annotations: List<AnnotationStub> = emptyList()
+        ) : Setter() {
+            override val typeParameters: List<StubType> = emptyList()
+        }
 
         class MemberAt(
                 val offset: Long,
@@ -331,7 +343,7 @@ class FunctionStub(
         val modality: MemberStubModality,
         override val typeParameters: List<StubType> = emptyList()
 
-) : StubElementWithOrigin,  FunctionalStub {
+) : StubElementWithOrigin, FunctionalStub {
     override fun accept(visitor: StubIrVisitor) {
         visitor.visitFunction(this)
     }

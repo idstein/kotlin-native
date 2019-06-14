@@ -343,9 +343,37 @@ class StubIrTextEmitter(
         }
 
         override fun visitFunction(element: FunctionStub) {
+
         }
 
         override fun visitProperty(element: PropertyStub) {
+            element.annotations.forEach {
+                out(renderAnnotation(it))
+            }
+            val modality = renderMemberModality(element.modality)
+            val receiver = if (element.receiverType != null) {
+                "${renderStubType(element.receiverType)}."
+            } else {
+                ""
+            }
+            when (val kind = element.kind) {
+                is PropertyStub.Kind.Constant -> {
+                    out("${modality}const val $receiver${element.name}: ${renderStubType(element.type)} = ${renderValueUsage(kind.constant)}")
+                }
+                is PropertyStub.Kind.Val -> {
+                    out("${modality}val $receiver${element.name}: ${renderStubType(element.type)}")
+                    indent {
+                        out(renderPropertyAccessor(kind.getter))
+                    }
+                }
+                is PropertyStub.Kind.Var -> {
+                    out("${modality}var $receiver${element.name}: ${renderStubType(element.type)}")
+                    indent {
+                        out(renderPropertyAccessor(kind.getter))
+                        out(renderPropertyAccessor(kind.setter))
+                    }
+                }
+            }
         }
 
         override fun visitEnumVariant(enumVariantStub: EnumVariantStub) {
@@ -356,6 +384,13 @@ class StubIrTextEmitter(
 
         override fun visitPropertyAccessor(propertyAccessor: PropertyAccessor) {
         }
+    }
+
+    private fun renderMemberModality(modality: MemberStubModality): String = when (modality) {
+        MemberStubModality.OVERRIDE -> "override "
+        MemberStubModality.OPEN -> "open "
+        MemberStubModality.NONE -> ""
+        MemberStubModality.FINAL -> "final"
     }
 
     private fun renderClassHeader(classStub: ClassStub): String {
@@ -460,4 +495,28 @@ class StubIrTextEmitter(
 
     private fun renderEnumVariant(enumVariantStub: EnumVariantStub): String =
             "${enumVariantStub.name}(${renderValueUsage(enumVariantStub.constant)})"
+
+    private fun renderPropertyAccessor(accessor: PropertyAccessor): String = when (accessor) {
+        is PropertyAccessor.Getter.SimpleGetter -> {
+            when {
+                accessor.constant != null -> " = ${renderValueUsage(accessor.constant)}"
+                else -> TODO()
+            }
+        }
+        is PropertyAccessor.Getter.ExternalGetter -> "external get()"
+
+        is PropertyAccessor.Getter.ArrayMemberAt -> TODO()
+
+        is PropertyAccessor.Getter.MemberAt -> TODO()
+
+        is PropertyAccessor.Getter.ReadBits -> TODO()
+
+        is PropertyAccessor.Setter.SimpleSetter -> TODO()
+
+        is PropertyAccessor.Setter.MemberAt -> TODO()
+
+        is PropertyAccessor.Setter.WriteBits -> TODO()
+
+        is PropertyAccessor.Setter.ExternalSetter -> "external set(TODO)"
+    }
 }
