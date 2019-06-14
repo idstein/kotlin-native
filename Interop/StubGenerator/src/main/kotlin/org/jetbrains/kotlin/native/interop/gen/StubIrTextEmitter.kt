@@ -4,7 +4,10 @@ import org.jetbrains.kotlin.native.interop.gen.jvm.InteropConfiguration
 import org.jetbrains.kotlin.native.interop.gen.jvm.KotlinPlatform
 import org.jetbrains.kotlin.native.interop.gen.jvm.StubGenerator
 import org.jetbrains.kotlin.native.interop.indexer.*
+import org.jetbrains.kotlin.utils.addToStdlib.firstIsInstance
 import java.lang.IllegalStateException
+
+private const val REDECLARATION_PATCH = "private "
 
 class StubIrTextEmitter(
         private val configuration: InteropConfiguration,
@@ -16,7 +19,9 @@ class StubIrTextEmitter(
         private val cFile: Appendable,
         private val entryPoint: String?,
         private val imports: Imports
-) {
+) : NativeBacked {
+
+    private val StubElement.isTopLevel get() = this in stubs.children
 
     private val ktOutput: (CharSequence) -> Appendable = ktFile::appendln
     private val cOutput: (CharSequence) -> Appendable = cFile::appendln
@@ -314,6 +319,14 @@ class StubIrTextEmitter(
             generateKotlinFileHeader()
             printer.visitContainer(stubs)
         }
+        val nativeBridges = simpleBridgeGenerator.prepare()
+
+        withOutput(ktFile) {
+            nativeBridges.kotlinLines.forEach(out)
+            if (platform == KotlinPlatform.JVM) {
+                out("private val loadLibrary = System.loadLibrary(\"$libName\")")
+            }
+        }
     }
 
     private val printer = object : StubIrVisitor {
@@ -334,28 +347,35 @@ class StubIrTextEmitter(
         }
 
         override fun visitContainer(element: StubContainer) {
+            out("")
             element.children.forEach {
                 it.accept(this)
+                out("")
             }
         }
 
         override fun visitTypealias(element: TypealiasStub) {
+            out("typealias ${renderStubType(element.alias)} = ${renderStubType(element.aliasee)}")
         }
 
         override fun visitFunction(element: FunctionStub) {
-
+            val modality = renderMemberModality(element.modality)
+            val external = if (element.external) "external " else ""
+            element.annotations.forEach {
+                out(renderAnnotation(it))
+            }
+            val parameters = element.parameters.joinToString(prefix = "(", postfix = ")") { renderFunctionParameter(it) }
+            block("$external${modality}fun ${element.name}$parameters: ${renderStubType(element.returnType)}") {
+                renderBridgeBody(element)
+            }
         }
 
         override fun visitProperty(element: PropertyStub) {
             element.annotations.forEach {
                 out(renderAnnotation(it))
             }
-            val modality = renderMemberModality(element.modality)
-            val receiver = if (element.receiverType != null) {
-                "${renderStubType(element.receiverType)}."
-            } else {
-                ""
-            }
+            val modality = (if (element.isTopLevel) REDECLARATION_PATCH else "") + renderMemberModality(element.modality)
+            val receiver = if (element.receiverType != null) "${renderStubType(element.receiverType)}." else ""
             when (val kind = element.kind) {
                 is PropertyStub.Kind.Constant -> {
                     out("${modality}const val $receiver${element.name}: ${renderStubType(element.type)} = ${renderValueUsage(kind.constant)}")
@@ -386,20 +406,86 @@ class StubIrTextEmitter(
         }
     }
 
+    private fun renderFunctionParameter(parameter: FunctionParameterStub): String {
+        val annotations = if (parameter.annotations.isEmpty())
+            ""
+        else
+            parameter.annotations.joinToString { renderAnnotation(it) } + " "
+        val vararg = if (parameter.isVararg) "vararg " else ""
+        return "$annotations$vararg${parameter.name}: ${renderStubType(parameter.type)}"
+    }
+
     private fun renderMemberModality(modality: MemberStubModality): String = when (modality) {
         MemberStubModality.OVERRIDE -> "override "
         MemberStubModality.OPEN -> "open "
         MemberStubModality.NONE -> ""
-        MemberStubModality.FINAL -> "final"
+        MemberStubModality.FINAL -> "final "
+    }
+
+    private fun isCValuesRef(type: StubType): Boolean {
+        if (type !is WrapperStubType) return false
+
+        return type.kotlinType is KotlinClassifierType && type.kotlinType.classifier == KotlinTypes.cValuesRef
+    }
+
+    private fun renderBridgeBody(function: FunctionStub) {
+        assert(function.origin is StubOrigin.Function)
+        val origin = function.origin as StubOrigin.Function
+        val bodyGenerator = KotlinCodeBuilder(scope = kotlinFile)
+        val bridgeArguments = mutableListOf<TypedKotlinValue>()
+        var isVararg = false
+        function.parameters.forEachIndexed { index, parameter ->
+            isVararg = isVararg or parameter.isVararg
+            val bridgeArgument = when {
+                parameter.annotations.filterIsInstance<AnnotationStub.CCall.CString>().isNotEmpty() -> {
+                    bodyGenerator.pushMemScoped()
+                    "${parameter.name}?.cstr?.getPointer(memScope)"
+                }
+                parameter.annotations.filterIsInstance<AnnotationStub.CCall.WCString>().isNotEmpty() -> {
+                    bodyGenerator.pushMemScoped()
+                    "${parameter.name}?.wcstr?.getPointer(memScope)"
+                }
+                isCValuesRef(parameter.type) -> {
+                    bodyGenerator.pushMemScoped()
+                    bodyGenerator.getNativePointer(parameter.name)
+                }
+                else -> {
+                    parameter.name
+                }
+            }
+            // TODO: Better way to pass [Type]?
+            bridgeArguments += TypedKotlinValue(origin.function.parameters[index].type, bridgeArgument)
+        }
+        if (!isVararg || platform != KotlinPlatform.NATIVE) {
+            val result = mappingBridgeGenerator.kotlinToNative(
+                    bodyGenerator,
+                    this,
+                    origin.function.returnType,
+                    bridgeArguments,
+                    independent = false
+            ) { nativeValues ->
+                "${origin.function.name}(${nativeValues.joinToString()})"
+            }
+            bodyGenerator.returnResult(result)
+        } else {
+            val cCallAnnotation = function.annotations.firstIsInstance<AnnotationStub.CCall.Symbol>()
+            val cCallSymbolName = cCallAnnotation.symbolName
+            simpleBridgeGenerator.insertNativeBridge(
+                    this,
+                    emptyList(),
+                    listOf("extern const void* $cCallSymbolName __asm(${cCallSymbolName.quoteAsKotlinLiteral()});",
+                            "extern const void* $cCallSymbolName = &${origin.function.name};")
+            )
+        }
+        bodyGenerator.build().forEach { out(it) }
     }
 
     private fun renderClassHeader(classStub: ClassStub): String {
-
         val modality = when (classStub) {
             is ClassStub.Simple -> renderClassStubModality(classStub.modality)
             is ClassStub.Companion -> ""
             is ClassStub.Enum -> "enum class"
-        }
+        }.let { (if (classStub.isTopLevel) "$REDECLARATION_PATCH" else "") + it }
         val className = when (classStub) {
             is ClassStub.Simple -> declareClassifier(classStub.classifier)
             is ClassStub.Companion -> "companion object"
@@ -505,17 +591,35 @@ class StubIrTextEmitter(
         }
         is PropertyAccessor.Getter.ExternalGetter -> "external get()"
 
-        is PropertyAccessor.Getter.ArrayMemberAt -> TODO()
+        is PropertyAccessor.Getter.ArrayMemberAt -> "get() = arrayMemberAt(${accessor.offset})"
 
-        is PropertyAccessor.Getter.MemberAt -> TODO()
+        is PropertyAccessor.Getter.MemberAt -> {
+            if (accessor.typeParameters.isEmpty()) {
+                "get() = memberAt(${accessor.offset})"
+            } else {
+                val typeParameters = accessor.typeParameters.joinToString(prefix = "<", postfix = ">") { renderStubType(it) }
+                "get() = memberAt$typeParameters(${accessor.offset}).value"
+            }
+        }
 
-        is PropertyAccessor.Getter.ReadBits -> TODO()
+        is PropertyAccessor.Getter.ReadBits -> {
+            TODO()
+        }
 
         is PropertyAccessor.Setter.SimpleSetter -> TODO()
 
-        is PropertyAccessor.Setter.MemberAt -> TODO()
+        is PropertyAccessor.Setter.MemberAt -> {
+            if (accessor.typeParameters.isEmpty()) {
+                error("Unexpected memberAt setter without type parameters!")
+            } else {
+                val typeParameters = accessor.typeParameters.joinToString(prefix = "<", postfix = ">") { renderStubType(it) }
+                "set(value) { memberAt$typeParameters(${accessor.offset}).value = value }"
+            }
+        }
 
-        is PropertyAccessor.Setter.WriteBits -> TODO()
+        is PropertyAccessor.Setter.WriteBits -> {
+            TODO()
+        }
 
         is PropertyAccessor.Setter.ExternalSetter -> "external set(TODO)"
     }

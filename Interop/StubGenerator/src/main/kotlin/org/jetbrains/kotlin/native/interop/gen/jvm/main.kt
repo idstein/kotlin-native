@@ -212,12 +212,12 @@ private fun processCLib(args: Array<String>, additionalArgs: Map<String, Any> = 
     val outKtFileRelative = (fqParts + outKtFileName).joinToString("/")
     val outKtFile = File(ktGenRoot, outKtFileRelative)
 
-    val outKtFileRelativeNew = (fqParts + outKtFileNameNew).joinToString("/")
-    val outKtFileNew = File(ktGenRoot, outKtFileRelativeNew)
-
     val libName = (additionalArgs["cstubsname"] as? String)?: fqParts.joinToString("") + "stubs"
 
     val tempFiles = TempFiles(libName, argParser.get<String>("Xtemporary-files-dir"))
+
+    val outKtFileRelativeNew = (fqParts + outKtFileNameNew).joinToString("/")
+    val outKtFileNew = File(tempFiles.create(outKtFileNameNew).absolutePath)
 
     val imports = parseImports((additionalArgs["import"] as? List<String>)?.toTypedArray() ?: arrayOf())
 

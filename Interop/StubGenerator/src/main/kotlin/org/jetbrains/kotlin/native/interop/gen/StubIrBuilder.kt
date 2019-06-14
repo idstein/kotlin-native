@@ -246,7 +246,7 @@ class StubIrBuilder(
             }
 
             val representAsValuesRef = representCFunctionParameterAsValuesRef(parameter.type)
-
+            val origin = StubOrigin.FunctionParameter(parameter)
             parameters += when {
                 representCFunctionParameterAsString(func, parameter.type) -> {
                     val annotations = when (platform) {
@@ -254,7 +254,7 @@ class StubIrBuilder(
                         KotlinPlatform.NATIVE -> listOf(AnnotationStub.CCall.CString)
                     }
                     val type = WrapperStubType(KotlinTypes.string.makeNullable())
-                    FunctionParameterStub(parameterName, type, annotations)
+                    FunctionParameterStub(parameterName, type, annotations, origin = origin)
                 }
                 representCFunctionParameterAsWString(func, parameter.type) -> {
                     val annotations = when (platform) {
@@ -262,15 +262,15 @@ class StubIrBuilder(
                         KotlinPlatform.NATIVE -> listOf(AnnotationStub.CCall.WCString)
                     }
                     val type = WrapperStubType(KotlinTypes.string.makeNullable())
-                    FunctionParameterStub(parameterName, type, annotations)
+                    FunctionParameterStub(parameterName, type, annotations, origin = origin)
                 }
                 representAsValuesRef != null -> {
-                    FunctionParameterStub(parameterName, WrapperStubType(representAsValuesRef))
+                    FunctionParameterStub(parameterName, WrapperStubType(representAsValuesRef), origin = origin)
                 }
                 else -> {
                     val mirror = mirror(parameter.type)
                     val type = WrapperStubType(mirror.argType)
-                    FunctionParameterStub(parameterName, type)
+                    FunctionParameterStub(parameterName, type, origin = origin)
                 }
             }
         }
@@ -444,10 +444,10 @@ class StubIrBuilder(
         val companionSuperInit = SuperClassInit(companionSuper, listOf(IntegralConstantStub(def.size), IntegralConstantStub(def.align.toLong())))
         val companion = ClassStub.Companion(companionSuperInit)
 
-        ClassStub.Simple(
+        classes += ClassStub.Simple(
                 classifier,
                 origin = StubOrigin.Struct(decl),
-                properties = fields.filterNotNull() + bitFields,
+                properties = fields.filterNotNull() + if (platform == KotlinPlatform.NATIVE) bitFields else emptyList(),
                 functions = emptyList(),
                 modality = ClassStubModality.NONE,
                 annotations = listOfNotNull(structAnnotation),
@@ -504,6 +504,7 @@ class StubIrBuilder(
     }
 
     private fun generateStubsForObjCProtocol(objCProtocol: ObjCProtocol) {
+
     }
 
     private fun generateStubsForObjCClass(objCClass: ObjCClass) {

@@ -1,9 +1,6 @@
 package org.jetbrains.kotlin.native.interop.gen
 
-import org.jetbrains.kotlin.native.interop.indexer.EnumDef
-import org.jetbrains.kotlin.native.interop.indexer.FunctionDecl
-import org.jetbrains.kotlin.native.interop.indexer.ObjCContainer
-import org.jetbrains.kotlin.native.interop.indexer.StructDecl
+import org.jetbrains.kotlin.native.interop.indexer.*
 
 class StubContainerMeta(
         val textAtStart: String = "",
@@ -78,6 +75,8 @@ sealed class StubOrigin {
     class Enum(val enum: EnumDef) : StubOrigin()
 
     class Function(val function: FunctionDecl) : StubOrigin()
+
+    class FunctionParameter(val parameter: Parameter) : StubOrigin()
 
     class Struct(val struct: StructDecl) : StubOrigin()
 }
@@ -235,7 +234,8 @@ class FunctionParameterStub(
         val name: String,
         val type: StubType,
         override val annotations: List<AnnotationStub> = emptyList(),
-        isVararg: Boolean = false
+        val isVararg: Boolean = false,
+        val origin: StubOrigin = StubOrigin.None
 ) : ValueStub(), AnnotationHolder
 
 enum class MemberStubModality {
