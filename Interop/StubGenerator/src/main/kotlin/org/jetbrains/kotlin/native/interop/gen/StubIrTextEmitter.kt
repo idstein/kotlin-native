@@ -517,7 +517,7 @@ class StubIrTextEmitter(
         }
 
         is PropertyAccessor.Getter.ReadBits -> {
-            TODO()
+            "get() = readBits(this.rawPtr, ${accessor.offset}, ${accessor.size}, ${accessor.signed})"
         }
 
         is PropertyAccessor.Setter.SimpleSetter -> TODO()
@@ -532,7 +532,7 @@ class StubIrTextEmitter(
         }
 
         is PropertyAccessor.Setter.WriteBits -> {
-            TODO()
+            "set() = writeBits(this.rawPtr, ${accessor.offset}, ${accessor.size}, TODO())"
         }
 
         is PropertyAccessor.Setter.ExternalSetter -> "external set(TODO)"
