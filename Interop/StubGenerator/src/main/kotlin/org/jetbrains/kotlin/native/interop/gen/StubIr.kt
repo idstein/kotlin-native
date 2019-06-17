@@ -226,6 +226,8 @@ sealed class ClassStub : StubElementWithOrigin, StubContainer, AnnotationHolder 
             val classifier: Classifier,
             val variants: List<EnumVariantStub>,
             val constructorParams: List<ConstructorParamStub> = emptyList(),
+            val baseType: WrapperStubType,
+            val pointedType: WrapperStubType,
             override val superClassInit: SuperClassInit? = null,
             override val interfaces: List<StubType> = emptyList(),
             override val properties: List<PropertyStub> = emptyList(),
@@ -399,7 +401,7 @@ class ConstructorStub(
 
 class EnumVariantStub(
         val name: String,
-        val constant: ConstantStub
+        val constant: IntegralConstantStub
 ) : StubElement {
     override fun accept(visitor: StubIrVisitor) {
         visitor.visitEnumVariant(this)

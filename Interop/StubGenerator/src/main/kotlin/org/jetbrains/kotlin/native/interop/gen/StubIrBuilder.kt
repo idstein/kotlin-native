@@ -175,67 +175,28 @@ class StubIrBuilder(
         }
 
         val baseTypeMirror = mirror(enumDef.baseType)
-        val baseKotlinType = baseTypeMirror.argType
-
-        val canonicalsByValue = enumDef.constants
-                .groupingBy { it.value }
-                .reduce { _, accumulator, element ->
-                    if (element.isMoreCanonicalThan(accumulator)) {
-                        element
-                    } else {
-                        accumulator
-                    }
-                }
-
-        val (canonicalConstants, aliasConstants) = enumDef.constants.partition { canonicalsByValue[it.value] == it }
+        val pointedType = WrapperStubType(baseTypeMirror.pointedType)
+        val baseType = WrapperStubType(baseTypeMirror.argType)
 
         val clazz = (mirror(EnumType(enumDef)) as TypeMirror.ByValue).valueType.classifier
 
-        val enumVariants = canonicalConstants.map {
+        val enumVariants = enumDef.constants.map {
             val literal = tryCreateIntegralStub(enumDef.baseType, it.value)
                     ?: error("Cannot create enum value ${it.value} of type ${enumDef.baseType}")
             EnumVariantStub(it.name.asSimpleName(), literal)
         }
 
-        val valueParamStub = ConstructorParamStub("value", WrapperStubType(baseKotlinType), ConstructorParamStub.Qualifier.VAL(true))
+        val qualifier = ConstructorParamStub.Qualifier.VAL(overrides = true)
 
+        val valueParamStub = ConstructorParamStub("value", baseType, qualifier)
+
+        // TODO: It's an interface.
         val superClassInit = SuperClassInit(SymbolicStubType("CEnum"))
 
-        val companionStub = run {
-            val properties = aliasConstants.forEach {
-                val mainConstant = canonicalsByValue[it.value]!!
-//                out("val ${it.name.asSimpleName()} = ${mainConstant.name.asSimpleName()}")
-//                PropertyStub(it.name.asSimpleName(), WrapperStubType)
-            }
-            //out("fun byValue(value: $baseKotlinType) = " +
-            //                        "${enumDef.kotlinName.asSimpleName()}.values().find { it.value == value }!!")
-            // TODO: Fill companion object.
-            ClassStub.Companion()
-        }
-//        val varClass = run {
-//            val cEnumVarClass = SymbolicStubType("CEnumVar")
-//            val nativePtrType = SymbolicStubType("NativePtr")
-//            val rawPtr = ConstructorParamStub("rawPtr", nativePtrType)
-//            val superClassInit = SuperClassInit(cEnumVarClass, listOf(rawPtr))
-//            val varClassCompanion = run {
-//                val superClassInit = SuperClassInit("Type", listOf(IntegralConstantStub(base)))
-//                CompanionStub()
-//            }
-//            SimpleClassStub()
-//        }
-//
-//        block("enum class ${kotlinFile.declare(clazz)}(override val value: $baseKotlinType) : CEnum") {
-//            block("class Var(rawPtr: NativePtr) : CEnumVar(rawPtr)") {
-//                val basePointedTypeName = baseTypeMirror.pointedType.render(kotlinFile)
-//                out("companion object : Type($basePointedTypeName.size.toInt())")
-//                out("var value: ${enumDef.kotlinName.asSimpleName()}")
-//                out("    get() = byValue(this.reinterpret<$basePointedTypeName>().value)")
-//                out("    set(value) { this.reinterpret<$basePointedTypeName>().value = value.value }")
-//            }
-//        }
         classes += ClassStub.Enum(clazz, enumVariants,
+                baseType = baseType,
+                pointedType = pointedType,
                 origin = StubOrigin.Enum(enumDef),
-                companion = companionStub,
                 constructorParams = listOf(valueParamStub),
                 superClassInit = superClassInit
         )

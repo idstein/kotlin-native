@@ -2,7 +2,6 @@ package org.jetbrains.kotlin.native.interop.gen
 
 import org.jetbrains.kotlin.native.interop.gen.jvm.InteropConfiguration
 import org.jetbrains.kotlin.native.interop.gen.jvm.KotlinPlatform
-import org.jetbrains.kotlin.native.interop.gen.jvm.StubGenerator
 import org.jetbrains.kotlin.native.interop.indexer.*
 import org.jetbrains.kotlin.utils.addToStdlib.firstIsInstance
 import java.lang.IllegalStateException
@@ -313,20 +312,23 @@ class StubIrTextEmitter(
         }
     }
 
+    private fun EnumVariantStub.isMoreCanonicalThan(other: EnumVariantStub): Boolean = with(other.name.toLowerCase()) {
+        contains("min") || contains("max") ||
+                contains("first") || contains("last") ||
+                contains("begin") || contains("end")
+    }
+
     private val printer = object : StubIrVisitor {
         override fun visitClass(element: ClassStub) {
             element.annotations.forEach {
                 out(renderAnnotation(it))
             }
-            val header = renderClassHeader(element)
-            block(header) {
+            block(renderClassHeader(element)) {
                 if (element is ClassStub.Enum) {
-                    for (variant in element.variants) {
-                        out(renderEnumVariant(variant) + ",")
-                    }
-                    out(";")
+                    renderEnumBody(element)
+                } else {
+                    visitContainer(element)
                 }
-                visitContainer(element)
             }
         }
 
@@ -404,6 +406,48 @@ class StubIrTextEmitter(
             simpleStubContainer.simpleContainers.forEach { it.accept(this) }
             out(simpleStubContainer.meta.textAtEnd)
             out("")
+        }
+    }
+
+    // TODO: It looks like more logic can be shared between different emitters.
+    private fun renderEnumBody(enum: ClassStub.Enum) {
+        val canonicalsByValue = enum.variants
+                .groupingBy { it.constant.value }
+                .reduce { _, accumulator, element ->
+                    if (element.isMoreCanonicalThan(accumulator)) {
+                        element
+                    } else {
+                        accumulator
+                    }
+                }
+
+        val (canonicalConstants, aliasConstants) = enum.variants.partition { canonicalsByValue[it.constant.value] == it }
+
+        canonicalConstants.forEach {
+            renderEnumVariant(it)
+        }
+
+        val simpleKotlinName = enum.classifier.topLevelName.asSimpleName()
+        val baseKotlinType = enum.baseType.kotlinType
+        val basePointedTypeName = enum.pointedType.kotlinType.render(kotlinFile)
+
+        out(";")
+        block("companion object") {
+            aliasConstants.forEach {
+                val mainConstant = canonicalsByValue[it.constant.value]!!
+                out("val ${it.name.asSimpleName()} = ${mainConstant.name.asSimpleName()}")
+            }
+            if (aliasConstants.isNotEmpty()) out("")
+
+            out("fun byValue(value: $baseKotlinType) = " +
+                    "$simpleKotlinName.values().find { it.value == value }!!")
+        }
+        out("")
+        block("class Var(rawPtr: NativePtr) : CEnumVar(rawPtr)") {
+            out("companion object : Type($basePointedTypeName.size.toInt())")
+            out("var value: $simpleKotlinName")
+            out("    get() = byValue(this.reinterpret<$basePointedTypeName>().value)")
+            out("    set(value) { this.reinterpret<$basePointedTypeName>().value = value.value }")
         }
     }
 
