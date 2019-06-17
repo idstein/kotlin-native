@@ -10,13 +10,13 @@ class StubIrTextEmitter(
         private val configuration: InteropConfiguration,
         private val libName: String,
         private val platform: KotlinPlatform,
-        private val stubs: TopLevelContainer,
+        private val stubs: Stubs,
         private val ktFile: Appendable,
         private val cFile: Appendable,
         private val entryPoint: String?
 ) : NativeBacked {
 
-    val fakeNativeBackedStub = object : NativeBacked {}
+    private val fakeNativeBackedStub = object : NativeBacked {}
 
     private val StubElement.isTopLevel get() = this in stubs.children
 
@@ -177,6 +177,28 @@ class StubIrTextEmitter(
             nativeBridges.kotlinLines.forEach(out)
             if (platform == KotlinPlatform.JVM) {
                 out("private val loadLibrary = System.loadLibrary(\"$libName\")")
+            }
+        }
+        withOutput(cFile) {
+            libraryForCStubs.preambleLines.forEach {
+                out(it)
+            }
+            out("")
+
+            out("// NOTE THIS FILE IS AUTO-GENERATED")
+            out("")
+
+            nativeBridges.nativeLines.forEach {
+                out(it)
+            }
+
+            if (entryPoint != null) {
+                out("extern int Konan_main(int argc, char** argv);")
+                out("")
+                out("__attribute__((__used__))")
+                out("int $entryPoint(int argc, char** argv)  {")
+                out("  return Konan_main(argc, argv);")
+                out("}")
             }
         }
     }
