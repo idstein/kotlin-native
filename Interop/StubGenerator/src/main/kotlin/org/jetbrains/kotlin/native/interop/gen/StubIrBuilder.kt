@@ -2,6 +2,7 @@ package org.jetbrains.kotlin.native.interop.gen
 
 import org.jetbrains.kotlin.native.interop.gen.jvm.InteropConfiguration
 import org.jetbrains.kotlin.native.interop.gen.jvm.KotlinPlatform
+import org.jetbrains.kotlin.native.interop.gen.jvm.StubGenerator
 import org.jetbrains.kotlin.native.interop.indexer.*
 
 // TODO: Should it implement [StubContainer]?
@@ -10,6 +11,7 @@ class TopLevelContainer(
         override val functions: List<FunctionalStub>,
         override val properties: List<PropertyStub>,
         override val typealiases: List<TypealiasStub>,
+        override val simpleContainers: List<SimpleStubContainer>,
         override val meta: StubContainerMeta,
         val declarationMapper: DeclarationMapper
 ) : StubContainer {
@@ -18,6 +20,7 @@ class TopLevelContainer(
         functions.forEach { it.accept(visitor) }
         properties.forEach { it.accept(visitor) }
         typealiases.forEach { it.accept(visitor) }
+        simpleContainers.forEach { it.accept(visitor) }
     }
 }
 
@@ -33,8 +36,28 @@ class StubIrBuilder(
     private val functions = mutableListOf<FunctionalStub>()
     private val globals = mutableListOf<PropertyStub>()
     private val typealiases = mutableListOf<TypealiasStub>()
+    private val containers = mutableListOf<SimpleStubContainer>()
+
+    private fun addStubs(stubs: List<StubElement>) = stubs.forEach(this::addStub)
+
+    private fun addStub(stub: StubElement) {
+        when(stub) {
+            is ClassStub -> classes += stub
+            is FunctionalStub -> functions += stub
+            is PropertyStub -> globals += stub
+            is TypealiasStub -> typealiases += stub
+            is SimpleStubContainer -> containers += stub
+            else -> error("Unexpected stub: $stub")
+        }
+    }
 
     private val platformWStringTypes = setOf("LPCWSTR")
+
+    val excludedFunctions: Set<String>
+        get() = configuration.excludedFunctions
+
+    val excludedMacros: Set<String>
+        get() = configuration.excludedMacros
 
     private val noStringConversion: Set<String>
         get() = configuration.noStringConversion
@@ -98,13 +121,51 @@ class StubIrBuilder(
         nativeIndex.objCClasses.forEach { generateStubsForObjCClass(it) }
         nativeIndex.objCCategories.forEach { generateStubsForObjCCategory(it) }
         nativeIndex.typedefs.forEach { generateStubsForTypedef(it) }
-        nativeIndex.globals.forEach { generateStubsForGlobal(it) }
+        nativeIndex.globals.filter { it.name !in excludedFunctions }.forEach { generateStubsForGlobal(it) }
         nativeIndex.enums.forEach { generateStubsForEnum(it) }
         nativeIndex.structs.forEach { generateStubsForStruct(it) }
         nativeIndex.functions.forEach { generateStubsForFunction(it) }
+        nativeIndex.macroConstants.filter { it.name !in excludedMacros }.forEach { generateStubsForMacroConstant(it) }
+        nativeIndex.wrappedMacros.filter { it.name !in excludedMacros }.forEach { generateStubsForWrappedMacro(it) }
 
         val meta = StubContainerMeta()
-        return TopLevelContainer(classes, functions, globals, typealiases, meta, declarationMapper)
+        return TopLevelContainer(classes, functions, globals, typealiases, containers, meta, declarationMapper)
+    }
+
+    private fun generateStubsForWrappedMacro(macro: WrappedMacroDef) {
+        generateStubsForGlobal(GlobalDecl(macro.name, macro.type, isConst = true))
+    }
+
+    private fun generateStubsForMacroConstant(constant: ConstantDef) {
+        val kotlinName = constant.name
+        val declaration = when (constant) {
+            is IntegerConstantDef -> {
+                val literal = tryCreateIntegralStub(constant.type, constant.value) ?: return
+                val kotlinType = WrapperStubType(mirror(constant.type).argType)
+                when (platform) {
+                    KotlinPlatform.NATIVE -> PropertyStub(kotlinName, kotlinType, PropertyStub.Kind.Constant(literal))
+                    // No reason to make it const val with backing field on Kotlin/JVM yet:
+                    KotlinPlatform.JVM -> {
+                        val getter = PropertyAccessor.Getter.SimpleGetter(constant = literal)
+                        PropertyStub(kotlinName, kotlinType, PropertyStub.Kind.Val(getter))
+                    }
+                }
+            }
+            is FloatingConstantDef -> {
+                val literal = tryCreateDoubleStub(constant.type, constant.value) ?: return
+                val kotlinType = WrapperStubType(mirror(constant.type).argType)
+                val getter = PropertyAccessor.Getter.SimpleGetter(constant = literal)
+                PropertyStub(kotlinName, kotlinType, PropertyStub.Kind.Val(getter))
+            }
+            is StringConstantDef -> {
+                val literal = StringConstantStub(constant.value.quoteAsKotlinLiteral())
+                val kotlinType = WrapperStubType(KotlinTypes.string)
+                val getter = PropertyAccessor.Getter.SimpleGetter(constant = literal)
+                PropertyStub(kotlinName, kotlinType, PropertyStub.Kind.Val(getter))
+            }
+            else -> return
+        }
+        globals += declaration
     }
 
     private fun generateStubsForEnum(enumDef: EnumDef) {
@@ -533,19 +594,26 @@ class StubIrBuilder(
     }
 
     private fun generateStubsForObjCProtocol(objCProtocol: ObjCProtocol) {
-
+        addStubs(ObjCProtocolBuilder(this, objCProtocol).build())
     }
 
     private fun generateStubsForObjCClass(objCClass: ObjCClass) {
+        addStubs(ObjCClassBuilder(this, objCClass).build())
     }
 
     private fun generateStubsForObjCCategory(objCCategory: ObjCCategory) {
+        addStubs(ObjCCategoryBuilder(this, objCCategory).build())
     }
 
     // TODO: make it more robust
     private fun tryCreateIntegralStub(type: Type, value: Long): IntegralConstantStub? {
         val integerType = type.unwrapTypedefs() as? IntegerType ?: return null
         return IntegralConstantStub(value)
+    }
+
+    private fun tryCreateDoubleStub(type: Type, value: Double): DoubleConstantStub? {
+        val unwrappedType = type.unwrapTypedefs() as? FloatingType ?: return null
+        return DoubleConstantStub(value)
     }
 
     /**
@@ -762,7 +830,7 @@ private abstract class ObjCContainerBuilder(
         stubIrBuilder: StubIrBuilder,
         private val container: ObjCClassOrProtocol,
         protected val metaContainerStub: ObjCContainerBuilder?
-) {
+) : StubElementBuilder {
     private val isMeta: Boolean get() = metaContainerStub == null
 
     private val methods: List<ObjCMethod>
@@ -885,14 +953,41 @@ private abstract class ObjCContainerBuilder(
     }
 }
 
-private open class ObjCClassOrProtocolBuilder(
+private sealed class ObjCClassOrProtocolBuilder(
         stubIrBuilder: StubIrBuilder,
         private val container: ObjCClassOrProtocol
 ) : ObjCContainerBuilder(
         stubIrBuilder,
         container,
-        metaContainerStub = object : ObjCContainerBuilder(stubIrBuilder, container, metaContainerStub = null) {}
+        metaContainerStub = object : ObjCContainerBuilder(stubIrBuilder, container, metaContainerStub = null) {
+            override fun build(): List<StubElement> {
+                val (properties, methods) = buildBody()
+                val classStub = ClassStub.Simple(
+                        super.classifier,
+                        properties = properties,
+                        functions = methods,
+                        origin = StubOrigin.None,
+                        modality = super.modality
+                )
+                return listOf(classStub)
+            }
+        }
 )
+
+private class ObjCProtocolBuilder(stubIrBuilder: StubIrBuilder, protocol: ObjCProtocol) :
+        ObjCClassOrProtocolBuilder(stubIrBuilder, protocol), StubElementBuilder {
+    override fun build(): List<StubElement> {
+        val (properties, methods) = buildBody()
+        val classStub = ClassStub.Simple(
+                super.classifier,
+                properties = properties,
+                functions = methods,
+                origin = StubOrigin.None,
+                modality = super.modality
+        )
+        return listOf(classStub, *metaContainerStub!!.build().toTypedArray())
+    }
+}
 
 private class ObjCClassBuilder(
         private val stubIrBuilder: StubIrBuilder,
@@ -941,8 +1036,17 @@ private class ObjCCategoryBuilder(
         createObjCPropertyBuilder(stubIrBuilder, it, category, methodToBuilder)
     }
 
-    override fun build(): List<StubElement> =
-        methodBuilders.flatMap { it.build() } + propertyBuilders.flatMap { it.build() }
+    override fun build(): List<StubElement> {
+        val description = "${category.clazz.name} (${category.name})"
+        val startText = "// @interface $description"
+        val endText = "// @end; // $description"
+        val container = SimpleStubContainer(
+                meta = StubContainerMeta(startText, endText),
+                functions = methodBuilders.flatMap { it.build() },
+                properties = propertyBuilders.flatMap { it.build() }
+        )
+        return listOf(container)
+    }
 }
 
 private fun createObjCPropertyBuilder(

@@ -23,9 +23,6 @@ class StubIrTextEmitter(
 
     private val StubElement.isTopLevel get() = this in stubs.children
 
-    private val ktOutput: (CharSequence) -> Appendable = ktFile::appendln
-    private val cOutput: (CharSequence) -> Appendable = cFile::appendln
-
     /**
      * The names that should not be used for struct classes to prevent name clashes
      */
@@ -43,7 +40,7 @@ class StubIrTextEmitter(
         pkgName.substringAfterLast('.')
     }
 
-    val libraryForCStubs = configuration.library.copy(
+    private val libraryForCStubs = configuration.library.copy(
             includes = mutableListOf<String>().apply {
                 add("stdint.h")
                 add("string.h")
@@ -368,9 +365,14 @@ class StubIrTextEmitter(
                     out("${modality}const val $receiver${element.name}: ${renderStubType(element.type)} = ${renderValueUsage(kind.constant)}")
                 }
                 is PropertyStub.Kind.Val -> {
-                    out("${modality}val $receiver${element.name}: ${renderStubType(element.type)}")
-                    indent {
-                        out(renderPropertyAccessor(kind.getter))
+                    val shouldWriteInline = kind.getter is PropertyAccessor.Getter.SimpleGetter && kind.getter.constant != null
+                    if (shouldWriteInline) {
+                        out("${modality}val $receiver${element.name}: ${renderStubType(element.type)}${renderPropertyAccessor(kind.getter)}")
+                    } else {
+                        out("${modality}val $receiver${element.name}: ${renderStubType(element.type)}")
+                        indent {
+                            out(renderPropertyAccessor(kind.getter))
+                        }
                     }
                 }
                 is PropertyStub.Kind.Var -> {
@@ -390,6 +392,18 @@ class StubIrTextEmitter(
         }
 
         override fun visitPropertyAccessor(propertyAccessor: PropertyAccessor) {
+        }
+
+        override fun visitSimpleStubContainer(simpleStubContainer: SimpleStubContainer) {
+            out(simpleStubContainer.meta.textAtStart)
+            out("")
+            simpleStubContainer.classes.forEach { it.accept(this) }
+            simpleStubContainer.functions.forEach { it.accept(this) }
+            simpleStubContainer.properties.forEach { it.accept(this) }
+            simpleStubContainer.typealiases.forEach { it.accept(this) }
+            simpleStubContainer.simpleContainers.forEach { it.accept(this) }
+            out(simpleStubContainer.meta.textAtEnd)
+            out("")
         }
     }
 

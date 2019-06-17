@@ -17,4 +17,6 @@ interface StubIrVisitor {
     fun visitConstructor(constructorStub: ConstructorStub)
 
     fun visitPropertyAccessor(propertyAccessor: PropertyAccessor)
+
+    fun visitSimpleStubContainer(simpleStubContainer: SimpleStubContainer)
 }

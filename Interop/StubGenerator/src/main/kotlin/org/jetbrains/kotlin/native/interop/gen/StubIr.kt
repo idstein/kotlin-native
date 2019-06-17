@@ -8,13 +8,29 @@ class StubContainerMeta(
 )
 
 // TODO: Looks like it should be splitted.
-// TODO: Add generic sub-containers (ex. for ObjC categories).
 interface StubContainer : StubElement {
     val meta: StubContainerMeta
     val classes: List<ClassStub>
     val functions: List<FunctionalStub>
     val properties: List<PropertyStub>
     val typealiases: List<TypealiasStub>
+    val simpleContainers: List<SimpleStubContainer>
+}
+
+/**
+ * For things that should be grouped together like ObjC categories.
+ */
+class SimpleStubContainer(
+        override val meta: StubContainerMeta = StubContainerMeta(),
+        override val classes: List<ClassStub> = emptyList(),
+        override val functions: List<FunctionalStub> = emptyList(),
+        override val properties: List<PropertyStub> = emptyList(),
+        override val typealiases: List<TypealiasStub> = emptyList(),
+        override val simpleContainers: List<SimpleStubContainer> = emptyList()
+) : StubContainer {
+    override fun accept(visitor: StubIrVisitor) {
+        visitor.visitSimpleStubContainer(this)
+    }
 }
 
 val StubContainer.children: List<StubElement>
@@ -189,7 +205,8 @@ sealed class ClassStub : StubElementWithOrigin, StubContainer, AnnotationHolder 
             override val annotations: List<AnnotationStub> = emptyList(),
             override val childrenClasses: List<ClassStub> = emptyList(),
             override val companion: Companion? = null,
-            override val functions: List<FunctionalStub> = emptyList()
+            override val functions: List<FunctionalStub> = emptyList(),
+            override val simpleContainers: List<SimpleStubContainer> = emptyList()
     ) : ClassStub()
 
     class Companion(
@@ -199,7 +216,8 @@ sealed class ClassStub : StubElementWithOrigin, StubContainer, AnnotationHolder 
             override val origin: StubOrigin = StubOrigin.None,
             override val annotations: List<AnnotationStub> = emptyList(),
             override val childrenClasses: List<ClassStub> = emptyList(),
-            override val functions: List<FunctionalStub> = emptyList()
+            override val functions: List<FunctionalStub> = emptyList(),
+            override val simpleContainers: List<SimpleStubContainer> = emptyList()
     ) : ClassStub() {
         override val companion: Companion? = null
     }
@@ -215,7 +233,8 @@ sealed class ClassStub : StubElementWithOrigin, StubContainer, AnnotationHolder 
             override val annotations: List<AnnotationStub> = emptyList(),
             override val childrenClasses: List<ClassStub> = emptyList(),
             override val companion: Companion?= null,
-            override val functions: List<FunctionalStub> = emptyList()
+            override val functions: List<FunctionalStub> = emptyList(),
+            override val simpleContainers: List<SimpleStubContainer> = emptyList()
     ) : ClassStub()
 
     override val meta: StubContainerMeta = StubContainerMeta()
