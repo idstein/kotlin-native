@@ -68,7 +68,11 @@ class SymbolicStubType(
         // TODO: use fq instead of just name.
         val name: String,
         override val typeParameters: List<StubType> = emptyList()
-) : StubType(), TypeParametersHolder
+) : StubType(), TypeParametersHolder {
+    constructor(classifier: Classifier) : this(classifier.fqName, emptyList())
+}
+
+//class SimpleStubType() : StubType()
 
 /**
  * Represents a source of StubIr element.
