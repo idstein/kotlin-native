@@ -13,7 +13,8 @@ class TopLevelContainer(
         override val typealiases: List<TypealiasStub>,
         override val simpleContainers: List<SimpleStubContainer>,
         override val meta: StubContainerMeta,
-        val declarationMapper: DeclarationMapper
+        val declarationMapper: DeclarationMapper,
+        val namesToBeDeclared: List<String>
 ) : StubContainer {
     override fun accept(visitor: StubIrVisitor) {
         classes.forEach { it.accept(visitor) }
@@ -61,6 +62,60 @@ class StubIrBuilder(
 
     private val noStringConversion: Set<String>
         get() = configuration.noStringConversion
+
+    /**
+     * Finds all names to be declared for the given type declaration,
+     * and adds them to [result].
+     *
+     * TODO: refactor to compute these names directly from declarations.
+     */
+    private fun getTypeDeclaringNames(type: Type, result: MutableList<String>) {
+        if (type.unwrapTypedefs() == VoidType) {
+            return
+        }
+
+        val mirror = mirror(type)
+        val varClassifier = mirror.pointedType.classifier
+        if (varClassifier.pkg == pkgName) {
+            result.add(varClassifier.topLevelName)
+        }
+        when (mirror) {
+            is TypeMirror.ByValue -> {
+                val valueClassifier = mirror.valueType.classifier
+                if (valueClassifier.pkg == pkgName && valueClassifier.topLevelName != varClassifier.topLevelName) {
+                    result.add(valueClassifier.topLevelName)
+                }
+            }
+            is TypeMirror.ByRef -> {}
+        }
+    }
+
+    private fun computeNamesToBeDeclared(): MutableList<String> =
+            mutableListOf<String>().apply {
+                nativeIndex.typedefs.forEach {
+                    getTypeDeclaringNames(Typedef(it), this)
+                }
+
+                nativeIndex.objCProtocols.forEach {
+                    add(it.kotlinClassName(isMeta = false))
+                    add(it.kotlinClassName(isMeta = true))
+                }
+
+                nativeIndex.objCClasses.forEach {
+                    add(it.kotlinClassName(isMeta = false))
+                    add(it.kotlinClassName(isMeta = true))
+                }
+
+                nativeIndex.structs.forEach {
+                    getTypeDeclaringNames(RecordType(it), this)
+                }
+
+                nativeIndex.enums.forEach {
+                    if (!it.isAnonymous) {
+                        getTypeDeclaringNames(EnumType(it), this)
+                    }
+                }
+            }
 
     private fun Type.isAliasOf(names: Set<String>): Boolean {
         var type = this
@@ -129,7 +184,7 @@ class StubIrBuilder(
         nativeIndex.wrappedMacros.filter { it.name !in excludedMacros }.forEach { generateStubsForWrappedMacro(it) }
 
         val meta = StubContainerMeta()
-        return TopLevelContainer(classes, functions, globals, typealiases, containers, meta, declarationMapper)
+        return TopLevelContainer(classes, functions, globals, typealiases, containers, meta, declarationMapper, computeNamesToBeDeclared())
     }
 
     private fun generateStubsForWrappedMacro(macro: WrappedMacroDef) {

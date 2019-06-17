@@ -253,10 +253,10 @@ private fun processCLib(args: Array<String>, additionalArgs: Map<String, Any> = 
     }
 
     val stubIrBuilder = StubIrBuilder(configuration, verbose, flavor, nativeIndex, imports)
-    val ir = stubIrBuilder.build()
+    val stubs = stubIrBuilder.build()
     outKtFileNew.bufferedWriter().use { ktFile ->
         File(outCFileNew.absolutePath).bufferedWriter().use { cFile ->
-            StubIrTextEmitter(configuration, libName, flavor, ir, nativeIndex, ktFile, cFile, entryPoint, imports).emit()
+            StubIrTextEmitter(configuration, libName, flavor, stubs, ktFile, cFile, entryPoint).emit()
         }
     }
 

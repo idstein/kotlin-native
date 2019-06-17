@@ -11,24 +11,14 @@ class StubIrTextEmitter(
         private val libName: String,
         private val platform: KotlinPlatform,
         private val stubs: TopLevelContainer,
-        private val nativeIndex: NativeIndex,
         private val ktFile: Appendable,
         private val cFile: Appendable,
-        private val entryPoint: String?,
-        private val imports: Imports
+        private val entryPoint: String?
 ) : NativeBacked {
 
     val fakeNativeBackedStub = object : NativeBacked {}
 
     private val StubElement.isTopLevel get() = this in stubs.children
-
-    /**
-     * The names that should not be used for struct classes to prevent name clashes
-     */
-    private val forbiddenStructNames = run {
-        val typedefNames = nativeIndex.typedefs.map { it.name }
-        typedefNames.toSet()
-    }
 
     private val pkgName: String
         get() = configuration.pkgName
@@ -60,7 +50,7 @@ class StubIrTextEmitter(
 
     private val declarationMapper = stubs.declarationMapper
 
-    private val kotlinFile = object : KotlinFile(pkgName, namesToBeDeclared = computeNamesToBeDeclared()) {
+    private val kotlinFile = object : KotlinFile(pkgName, namesToBeDeclared = stubs.namesToBeDeclared) {
         override val mappingBridgeGenerator: MappingBridgeGenerator
             get() = this@StubIrTextEmitter.mappingBridgeGenerator
     }
@@ -84,127 +74,6 @@ class StubIrTextEmitter(
     companion object {
         private val VALID_PACKAGE_NAME_REGEX = "[a-zA-Z0-9_.]+".toRegex()
     }
-
-
-    private fun computeNamesToBeDeclared(): MutableList<String> =
-            mutableListOf<String>().apply {
-                nativeIndex.typedefs.forEach {
-                    getTypeDeclaringNames(Typedef(it), this)
-                }
-
-                nativeIndex.objCProtocols.forEach {
-                    add(it.kotlinClassName(isMeta = false))
-                    add(it.kotlinClassName(isMeta = true))
-                }
-
-                nativeIndex.objCClasses.forEach {
-                    add(it.kotlinClassName(isMeta = false))
-                    add(it.kotlinClassName(isMeta = true))
-                }
-
-                nativeIndex.structs.forEach {
-                    getTypeDeclaringNames(RecordType(it), this)
-                }
-
-                nativeIndex.enums.forEach {
-                    if (!it.isAnonymous) {
-                        getTypeDeclaringNames(EnumType(it), this)
-                    }
-                }
-            }
-
-    /**
-     * Indicates whether this enum should be represented as Kotlin enum.
-     */
-    val EnumDef.isStrictEnum: Boolean
-        // TODO: if an anonymous enum defines e.g. a function return value or struct field type,
-        // then it probably should be represented as Kotlin enum
-        get() {
-            if (this.isAnonymous) {
-                return false
-            }
-
-            val name = this.kotlinName
-
-            if (name in configuration.strictEnums) {
-                return true
-            }
-
-            if (name in configuration.nonStrictEnums) {
-                return false
-            }
-
-            // Let the simple heuristic decide:
-            return !this.constants.any { it.isExplicitlyDefined }
-        }
-
-    /**
-     * The name to be used for this enum in Kotlin
-     */
-    private val EnumDef.kotlinName: String
-        get() = if (spelling.startsWith("enum ")) {
-            spelling.substringAfter(' ')
-        } else {
-            assert (!isAnonymous)
-            spelling
-        }
-
-    private fun mirror(type: Type): TypeMirror = mirror(declarationMapper, type)
-
-    /**
-     * Finds all names to be declared for the given type declaration,
-     * and adds them to [result].
-     *
-     * TODO: refactor to compute these names directly from declarations.
-     */
-    private fun getTypeDeclaringNames(type: Type, result: MutableList<String>) {
-        if (type.unwrapTypedefs() == VoidType) {
-            return
-        }
-
-        val mirror = mirror(type)
-        val varClassifier = mirror.pointedType.classifier
-        if (varClassifier.pkg == pkgName) {
-            result.add(varClassifier.topLevelName)
-        }
-        when (mirror) {
-            is TypeMirror.ByValue -> {
-                val valueClassifier = mirror.valueType.classifier
-                if (valueClassifier.pkg == pkgName && valueClassifier.topLevelName != varClassifier.topLevelName) {
-                    result.add(valueClassifier.topLevelName)
-                }
-            }
-            is TypeMirror.ByRef -> {}
-        }
-    }
-
-    private val anonymousStructKotlinNames = mutableMapOf<StructDecl, String>()
-
-    /**
-     * The name to be used for this struct in Kotlin
-     */
-    val StructDecl.kotlinName: String
-        get() {
-            if (this.isAnonymous) {
-                val names = anonymousStructKotlinNames
-                return names.getOrPut(this) {
-                    "anonymousStruct${names.size + 1}"
-                }
-            }
-
-            val strippedCName = if (spelling.startsWith("struct ") || spelling.startsWith("union ")) {
-                spelling.substringAfter(' ')
-            } else {
-                spelling
-            }
-
-            // TODO: don't mangle struct names because it wouldn't work if the struct
-            //  is imported into another interop library.
-            return if (strippedCName !in forbiddenStructNames)
-                strippedCName
-            else
-                strippedCName + "Struct"
-        }
 
     /**
      * The output currently used by the generator.
