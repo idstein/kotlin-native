@@ -292,6 +292,19 @@ sealed class PropertyAccessor() : FunctionalStub {
             override val annotations: List<AnnotationStub> = emptyList()
             override val typeParameters: List<StubType> = emptyList()
         }
+
+        // Hackey hack.
+        class BridgedGetter(val cGlobalName: String, val typeInfo: TypeInfo, val isArray: Boolean) : Getter() {
+            override val parameters: List<FunctionParameterStub> = emptyList()
+            override val annotations: List<AnnotationStub> = emptyList()
+            override val typeParameters: List<StubType> = emptyList()
+        }
+
+        class InterpretPointed(val cGlobalName:String, pointedType: WrapperStubType) : Getter() {
+            override val parameters: List<FunctionParameterStub> = emptyList()
+            override val annotations: List<AnnotationStub> = emptyList()
+            override val typeParameters: List<StubType> = listOf(pointedType)
+        }
     }
 
     sealed class Setter : PropertyAccessor() {
@@ -325,6 +338,12 @@ sealed class PropertyAccessor() : FunctionalStub {
                 override val typeParameters: List<StubType> = emptyList()
         ) : Setter()
 
+        // Hackey hack.
+        class BridgedSetter(val cGlobalName: String, val typeInfo: TypeInfo) : Setter() {
+            override val parameters: List<FunctionParameterStub> = emptyList()
+            override val annotations: List<AnnotationStub> = emptyList()
+            override val typeParameters: List<StubType> = emptyList()
+        }
     }
 
     override fun accept(visitor: StubIrVisitor) {

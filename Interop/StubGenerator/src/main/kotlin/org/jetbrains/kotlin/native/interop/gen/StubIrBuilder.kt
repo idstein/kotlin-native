@@ -499,8 +499,37 @@ class StubIrBuilder(
                 contains("begin") || contains("end")
     }
 
-    private fun generateStubsForGlobal(globalDecl: GlobalDecl) {
+    private fun generateStubsForGlobal(global: GlobalDecl) {
+        val mirror = mirror(declarationMapper, global.type)
+        val unwrappedType = global.type.unwrapTypedefs()
 
+        val kotlinType: KotlinType
+        val kind: PropertyStub.Kind
+        if (unwrappedType is ArrayType) {
+            kotlinType = (mirror as TypeMirror.ByValue).valueType
+            val getter = PropertyAccessor.Getter.BridgedGetter(global.name, mirror.info, isArray = true)
+            kind = PropertyStub.Kind.Val(getter)
+        } else {
+            when (mirror) {
+                is TypeMirror.ByValue -> {
+                    kotlinType = mirror.argType
+                    val getter = PropertyAccessor.Getter.BridgedGetter(global.name, mirror.info, isArray = false)
+                    kind = if (global.isConst) {
+                        PropertyStub.Kind.Val(getter)
+                    } else {
+                        val setter = PropertyAccessor.Setter.BridgedSetter(global.name, mirror.info)
+                        PropertyStub.Kind.Var(getter, setter)
+                    }
+                }
+                is TypeMirror.ByRef -> {
+                    kotlinType = mirror.pointedType
+                    val getter = PropertyAccessor.Getter.InterpretPointed(global.name, WrapperStubType(kotlinType))
+                    kind = PropertyStub.Kind.Val(getter)
+                }
+            }
+        }
+
+        globals += PropertyStub(global.name, WrapperStubType(kotlinType), kind)
     }
 
     private fun generateStubsForObjCProtocol(objCProtocol: ObjCProtocol) {

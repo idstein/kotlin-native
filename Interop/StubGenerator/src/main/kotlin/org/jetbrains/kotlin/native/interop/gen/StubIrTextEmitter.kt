@@ -7,8 +7,6 @@ import org.jetbrains.kotlin.native.interop.indexer.*
 import org.jetbrains.kotlin.utils.addToStdlib.firstIsInstance
 import java.lang.IllegalStateException
 
-private const val REDECLARATION_PATCH = "private "
-
 class StubIrTextEmitter(
         private val configuration: InteropConfiguration,
         private val libName: String,
@@ -20,6 +18,8 @@ class StubIrTextEmitter(
         private val entryPoint: String?,
         private val imports: Imports
 ) : NativeBacked {
+
+    val fakeNativeBackedStub = object : NativeBacked {}
 
     private val StubElement.isTopLevel get() = this in stubs.children
 
@@ -228,21 +228,8 @@ class StubIrTextEmitter(
         }
     }
 
-    private fun generateLinesBy(action: () -> Unit): List<String> {
-        val result = mutableListOf<String>()
-        withOutput({ result.add(it) }, action)
-        return result
-    }
-
     private fun <R> withOutput(appendable: Appendable, action: () -> R): R {
         return withOutput({ appendable.appendln(it) }, action)
-    }
-
-    private fun generateKotlinFragmentBy(block: () -> Unit): KotlinStub {
-        val lines = generateLinesBy(block)
-        return object : KotlinStub {
-            override fun generate(context: StubGenerationContext) = lines.asSequence()
-        }
     }
 
     private fun <R> indent(action: () -> R): R {
@@ -374,7 +361,7 @@ class StubIrTextEmitter(
             element.annotations.forEach {
                 out(renderAnnotation(it))
             }
-            val modality = (if (element.isTopLevel) REDECLARATION_PATCH else "") + renderMemberModality(element.modality)
+            val modality = renderMemberModality(element.modality)
             val receiver = if (element.receiverType != null) "${renderStubType(element.receiverType)}." else ""
             when (val kind = element.kind) {
                 is PropertyStub.Kind.Constant -> {
@@ -485,7 +472,7 @@ class StubIrTextEmitter(
             is ClassStub.Simple -> renderClassStubModality(classStub.modality)
             is ClassStub.Companion -> ""
             is ClassStub.Enum -> "enum class"
-        }.let { (if (classStub.isTopLevel) "$REDECLARATION_PATCH" else "") + it }
+        }.let { it }
         val className = when (classStub) {
             is ClassStub.Simple -> declareClassifier(classStub.classifier)
             is ClassStub.Companion -> "companion object"
@@ -622,5 +609,61 @@ class StubIrTextEmitter(
         }
 
         is PropertyAccessor.Setter.ExternalSetter -> "external set(TODO)"
+
+        is PropertyAccessor.Getter.BridgedGetter -> {
+            val typeInfo = accessor.typeInfo
+            val expression = if (accessor.isArray) {
+                val getAddressExpression = getGlobalAddressExpression(accessor.cGlobalName)
+                typeInfo.argFromBridged(getAddressExpression, kotlinFile, nativeBacked = this) + "!!"
+            } else {
+                typeInfo.argFromBridged(simpleBridgeGenerator.kotlinToNative(
+                        nativeBacked = this,
+                        returnType = typeInfo.bridgedType,
+                        kotlinValues = emptyList(),
+                        independent = false
+                ) {
+                    typeInfo.cToBridged(expr = accessor.cGlobalName)
+                }, kotlinFile, nativeBacked = this)
+            }
+            "get() = $expression"
+        }
+
+        is PropertyAccessor.Getter.InterpretPointed -> {
+            val typeParameters = accessor.typeParameters.joinToString(prefix = "<", postfix = ">") { renderStubType(it) }
+            val getAddressExpression = getGlobalAddressExpression(accessor.cGlobalName)
+            "get() = interpretPointed$typeParameters($getAddressExpression)"
+        }
+
+        is PropertyAccessor.Setter.BridgedSetter -> {
+            val typeInfo = accessor.typeInfo
+            val bridgedValue = BridgeTypedKotlinValue(typeInfo.bridgedType, typeInfo.argToBridged("value"))
+
+            "set(value) { " + simpleBridgeGenerator.kotlinToNative(
+                    nativeBacked = fakeNativeBackedStub,
+                    returnType = BridgedType.VOID,
+                    kotlinValues = listOf(bridgedValue),
+                    independent = false
+            ) { nativeValues ->
+                out("${accessor.cGlobalName} = ${typeInfo.cFromBridged(
+                        nativeValues.single(),
+                        scope,
+                        nativeBacked = fakeNativeBackedStub
+                )};")
+                ""
+            } + " }"
+        }
+    }
+
+    private val globalAddressExpressions = mutableMapOf<String, KotlinExpression>()
+
+    private fun getGlobalAddressExpression(cGlobalName: String) = globalAddressExpressions.getOrPut(cGlobalName) {
+        simpleBridgeGenerator.kotlinToNative(
+                nativeBacked = this,
+                returnType = BridgedType.NATIVE_PTR,
+                kotlinValues = emptyList(),
+                independent = false
+        ) {
+            "&$cGlobalName"
+        }
     }
 }
