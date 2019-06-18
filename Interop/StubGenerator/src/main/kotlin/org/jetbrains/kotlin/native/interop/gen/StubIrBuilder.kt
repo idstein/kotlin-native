@@ -4,25 +4,8 @@ import org.jetbrains.kotlin.native.interop.gen.jvm.InteropConfiguration
 import org.jetbrains.kotlin.native.interop.gen.jvm.KotlinPlatform
 import org.jetbrains.kotlin.native.interop.indexer.*
 
-class Stubs(
-        override val classes: List<ClassStub>,
-        override val functions: List<FunctionalStub>,
-        override val properties: List<PropertyStub>,
-        override val typealiases: List<TypealiasStub>,
-        override val simpleContainers: List<SimpleStubContainer>,
-        override val meta: StubContainerMeta
-) : StubContainer {
-    override fun accept(visitor: StubIrVisitor) {
-        classes.forEach { it.accept(visitor) }
-        functions.forEach { it.accept(visitor) }
-        properties.forEach { it.accept(visitor) }
-        typealiases.forEach { it.accept(visitor) }
-        simpleContainers.forEach { it.accept(visitor) }
-    }
-}
-
 data class StubIrBuilderResult(
-        val stubs: Stubs,
+        val stubs: SimpleStubContainer,
         val declarationMapper: DeclarationMapper,
         val namesToBeDeclared: List<String>,
         val bridgeGenerationComponents: BridgeGenerationComponents
@@ -315,7 +298,7 @@ class StubIrBuilder(
         nativeIndex.wrappedMacros.filter { it.name !in excludedMacros }.forEach { generateStubsForWrappedMacro(it) }
 
         val meta = StubContainerMeta()
-        val stubs = Stubs(classes, functions, globals, typealiases, containers,meta)
+        val stubs = SimpleStubContainer(meta, classes, functions, globals, typealiases, containers)
         val extras = object : BridgeGenerationComponents {
             override val getterToBridgeInfo = this@StubIrBuilder.buildingContext.getterToBridgeInfo
 
