@@ -124,7 +124,7 @@ sealed class AnnotationStub {
         class Factory(val selector: String, val encoding: String, val isStret: Boolean = false) : ObjC()
         object Consumed : ObjC()
         class Constructor(val selector: String, val designated: Boolean) : ObjC()
-        class ExternalClass(val protocolGetter: String = "", val binaryName: String = "")
+        class ExternalClass(val protocolGetter: String = "", val binaryName: String = "") : ObjC()
     }
 
     sealed class CCall : AnnotationStub() {

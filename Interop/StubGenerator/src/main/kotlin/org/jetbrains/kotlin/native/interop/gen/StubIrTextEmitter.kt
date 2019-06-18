@@ -6,7 +6,6 @@ import org.jetbrains.kotlin.native.interop.indexer.*
 import org.jetbrains.kotlin.utils.addToStdlib.firstIsInstance
 import java.lang.IllegalStateException
 
-
 class StubIrTextEmitter(
         private val configuration: InteropConfiguration,
         private val libName: String,
@@ -217,7 +216,7 @@ class StubIrTextEmitter(
             }
             block(renderClassHeader(element)) {
                 if (element is ClassStub.Enum) {
-                    renderEnumBody(element)
+                    emitEnumBody(element)
                 } else {
                     visitContainer(element)
                 }
@@ -301,8 +300,10 @@ class StubIrTextEmitter(
         }
     }
 
-    // TODO: It looks like more logic can be shared between different emitters.
-    private fun renderEnumBody(enum: ClassStub.Enum) {
+    // About method naming convention:
+    // - "emit" prefix means that method will call `out` by itself.
+    // - "render" prefix means that method returns string that should be emitted by caller.
+    private fun emitEnumBody(enum: ClassStub.Enum) {
         val canonicalsByValue = enum.variants
                 .groupingBy { it.constant.value }
                 .reduce { _, accumulator, element ->
@@ -505,16 +506,28 @@ class StubIrTextEmitter(
     private fun renderAnnotation(annotationStub: AnnotationStub): String = when (annotationStub) {
         AnnotationStub.ObjC.ConsumesReceiver -> "@CCall.ConsumesReceiver"
         AnnotationStub.ObjC.ReturnsRetained -> "@CCall.ReturnsRetained"
-        is AnnotationStub.ObjC.Method -> "@ObjCMethod(\"${annotationStub.selector}\", \"${annotationStub.encoding}\", ${annotationStub.isStret})"
-        is AnnotationStub.ObjC.Factory -> "@ObjCFactory(\"${annotationStub.selector}\", \"${annotationStub.encoding}\", ${annotationStub.isStret})"
-        AnnotationStub.ObjC.Consumed -> "@CCall.Consumed"
-        is AnnotationStub.ObjC.Constructor -> "@ObjCConstructor(\"${annotationStub.selector}\", ${annotationStub.designated})"
-        AnnotationStub.CCall.CString -> "@CCall.CString"
-        AnnotationStub.CCall.WCString -> "@CCall.WCString"
-        is AnnotationStub.CCall.Symbol -> "@CCall(\"${annotationStub.symbolName}\")"
-        is AnnotationStub.CStruct -> "@CStruct(\"${annotationStub.struct}\")"
-        is AnnotationStub.CNaturalStruct -> "@CNaturalStruct(\"${annotationStub.struct}\")"
-        is AnnotationStub.CLength -> "@CLength(${annotationStub.length})"
+        is AnnotationStub.ObjC.Method ->
+            "@ObjCMethod(${annotationStub.selector.quoteAsKotlinLiteral()}, ${annotationStub.encoding.quoteAsKotlinLiteral()}, ${annotationStub.isStret})"
+        is AnnotationStub.ObjC.Factory ->
+            "@ObjCFactory(${annotationStub.selector.quoteAsKotlinLiteral()}, ${annotationStub.encoding.quoteAsKotlinLiteral()}, ${annotationStub.isStret})"
+        AnnotationStub.ObjC.Consumed ->
+            "@CCall.Consumed"
+        is AnnotationStub.ObjC.Constructor ->
+            "@ObjCConstructor(${annotationStub.selector.quoteAsKotlinLiteral()}, ${annotationStub.designated})"
+        is AnnotationStub.ObjC.ExternalClass ->
+            "@ExternalObjCClass(${annotationStub.protocolGetter.quoteAsKotlinLiteral()}, ${annotationStub.binaryName.quoteAsKotlinLiteral()})"
+        AnnotationStub.CCall.CString ->
+            "@CCall.CString"
+        AnnotationStub.CCall.WCString ->
+            "@CCall.WCString"
+        is AnnotationStub.CCall.Symbol ->
+            "@CCall(${annotationStub.symbolName.quoteAsKotlinLiteral()})"
+        is AnnotationStub.CStruct ->
+            "@CStruct(${annotationStub.struct.quoteAsKotlinLiteral()})"
+        is AnnotationStub.CNaturalStruct ->
+            "@CNaturalStruct(${annotationStub.struct.quoteAsKotlinLiteral()})"
+        is AnnotationStub.CLength ->
+            "@CLength(${annotationStub.length})"
     }
 
     private fun renderEnumVariant(enumVariantStub: EnumVariantStub): String =
