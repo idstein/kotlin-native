@@ -252,7 +252,8 @@ class StubIrTextEmitter(
             }
             val parameters = element.parameters.joinToString(prefix = "(", postfix = ")") { renderFunctionParameter(it) }
             val receiver = element.receiverType?.let { renderStubType(it) + "." } ?: ""
-            block("$external${modality}fun $receiver${element.name}$parameters: ${renderStubType(element.returnType)}") {
+            val typeParameters = renderTypeParameters(element.typeParameters)
+            block("$external${modality}fun $typeParameters $receiver${element.name}$parameters: ${renderStubType(element.returnType)}") {
                 renderBridgeBody(element)
             }
         }
@@ -507,11 +508,11 @@ class StubIrTextEmitter(
     }
 
     private fun renderStubType(stubType: StubType): String = when (stubType) {
-        is TypeParameterStub -> {
-            val nullableSymbol = if (stubType.nullable) "?" else ""
-            val upperBound = if (stubType.upperBound != null) " : " + renderStubType(stubType.upperBound) else ""
-            "${stubType.name}$nullableSymbol$upperBound"
-        }
+//        is TypeParameterStub -> {
+//            val nullableSymbol = if (stubType.nullable) "?" else ""
+//            val upperBound = if (stubType.upperBound != null) " : " + renderStubType(stubType.upperBound) else ""
+//            "${stubType.name}$nullableSymbol$upperBound"
+//        }
         is WrapperStubType -> stubType.kotlinType.render(kotlinFile)
         is SymbolicStubType -> stubType.name
     }
@@ -585,11 +586,11 @@ class StubIrTextEmitter(
         is PropertyAccessor.Getter.ArrayMemberAt -> "get() = arrayMemberAt(${accessor.offset})"
 
         is PropertyAccessor.Getter.MemberAt -> {
-            if (accessor.typeParameters.isEmpty()) {
+            if (accessor.typeArguments.isEmpty()) {
                 "get() = memberAt(${accessor.offset})"
             } else {
-                val typeParameters = accessor.typeParameters.joinToString(prefix = "<", postfix = ">") { renderStubType(it) }
-                "get() = memberAt$typeParameters(${accessor.offset}).value"
+                val typeArguments = renderTypeArguments(accessor.typeArguments)
+                "get() = memberAt$typeArguments(${accessor.offset}).value"
             }
         }
 
@@ -621,11 +622,11 @@ class StubIrTextEmitter(
         }
 
         is PropertyAccessor.Setter.MemberAt -> {
-            if (accessor.typeParameters.isEmpty()) {
+            if (accessor.typeArguments.isEmpty()) {
                 error("Unexpected memberAt setter without type parameters!")
             } else {
-                val typeParameters = accessor.typeParameters.joinToString(prefix = "<", postfix = ">") { renderStubType(it) }
-                "set(value) { memberAt$typeParameters(${accessor.offset}).value = value }"
+                val typeArguments = renderTypeArguments(accessor.typeArguments)
+                "set(value) { memberAt$typeArguments(${accessor.offset}).value = value }"
             }
         }
 
@@ -641,6 +642,22 @@ class StubIrTextEmitter(
             "get() = interpretPointed$typeParameters($getAddressExpression)"
         }
     }
+
+    private fun renderTypeArguments(typeArguments: List<TypeArgument>) = if (typeArguments.isNotEmpty()) {
+        typeArguments.joinToString(", ", "<", ">") { renderStubType(it.type) }
+    } else {
+        ""
+    }
+
+    private fun renderTypeParameters(typeParameters: List<TypeParameterStub>) = if (typeParameters.isNotEmpty()) {
+        typeParameters.joinToString(", ", "<", ">") { renderTypeParameter(it) }
+    } else {
+        ""
+    }
+
+    private fun renderTypeParameter(typeParameterStub: TypeParameterStub) = typeParameterStub.upperBound?.let {
+        "${typeParameterStub.name}: ${renderStubType(it)}"
+    } ?: typeParameterStub.name
 
     private val globalAddressExpressions = mutableMapOf<String, KotlinExpression>()
 

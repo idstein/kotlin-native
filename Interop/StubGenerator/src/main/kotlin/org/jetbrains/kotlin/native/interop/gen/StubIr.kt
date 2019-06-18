@@ -61,7 +61,7 @@ class TypeParameterStub(
         val upperBound: StubType? = null
 ) {
     fun getStubType(nullable: Boolean): StubType =
-            SymbolicStubType(name)
+            SymbolicStubType(name, nullable = nullable)
 
 }
 
@@ -318,7 +318,7 @@ sealed class PropertyAccessor : FunctionalStub {
 
         class MemberAt(
                 val offset: Long,
-                val typeParameters: List<StubType> = emptyList()
+                val typeArguments: List<TypeArgument> = emptyList()
         ) : Getter() {
             override val parameters: List<FunctionParameterStub> = emptyList()
             override val annotations: List<AnnotationStub> = emptyList()
@@ -356,7 +356,7 @@ sealed class PropertyAccessor : FunctionalStub {
                 val offset: Long,
                 override val parameters: List<FunctionParameterStub> = emptyList(),
                 override val annotations: List<AnnotationStub> = emptyList(),
-                val typeParameters: List<StubType> = emptyList()
+                val typeArguments: List<TypeArgument> = emptyList()
         ) : Setter()
 
         class WriteBits(

@@ -83,10 +83,11 @@ internal class StructStubBuilder(
                     PropertyStub(field.name.asSimpleName(), WrapperStubType(type), kind, annotations = annotations)
                 } else {
                     val pointedType = WrapperStubType(fieldRefType.pointedType)
+                    val pointedTypeArgument = TypeArgument(pointedType)
                     if (fieldRefType is TypeMirror.ByValue) {
                         val kind = PropertyStub.Kind.Var(
-                                PropertyAccessor.Getter.MemberAt(offset, typeParameters = listOf(pointedType)),
-                                PropertyAccessor.Setter.MemberAt(offset, typeParameters = listOf(pointedType))
+                                PropertyAccessor.Getter.MemberAt(offset, typeArguments = listOf(pointedTypeArgument)),
+                                PropertyAccessor.Setter.MemberAt(offset, typeArguments = listOf(pointedTypeArgument))
                         )
                         PropertyStub(field.name.asSimpleName(), WrapperStubType(fieldRefType.argType), kind)
                     } else {
