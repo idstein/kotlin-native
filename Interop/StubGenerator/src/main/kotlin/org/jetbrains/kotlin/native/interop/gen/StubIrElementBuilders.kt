@@ -550,13 +550,13 @@ private class ObjCMethodStubBuilder(
                     val annotations = buildObjCMethodAnnotations(factoryAnnonation)
 
                     val originalReturnType = method.getReturnType(container.clazz)
+                    val typeParameter = TypeParameterStub("T", WrapperStubType(clazz))
                     val returnType = if (originalReturnType is ObjCPointer) {
-                        TypeParameterStub("T",  nullable = originalReturnType.isNullable)
+                        typeParameter.getStubType(originalReturnType.isNullable)
                     } else {
                         // This shouldn't happen actually.
                         this.stubReturnType
                     }
-                    val typeParameter = TypeParameterStub("T", WrapperStubType(clazz))
                     val receiverType = SymbolicStubType(KotlinTypes.objCClassOf, listOf(typeParameter))
                     val createMethod = FunctionStub(
                             "create",

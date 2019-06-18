@@ -47,7 +47,9 @@ val StubContainer.children: List<StubElement>
     }
 
 
-sealed class StubType
+sealed class StubType {
+    abstract val nullable: Boolean
+}
 
 /**
  * Marks that abstract value of such type can be passed as value.
@@ -56,27 +58,44 @@ sealed class ValueStub
 
 class TypeParameterStub(
         val name: String,
-        val upperBound: StubType? = null,
-        val nullable: Boolean = false
-) : StubType()
+        val upperBound: StubType? = null
+) {
+    fun getStubType(nullable: Boolean): StubType =
+            SymbolicStubType(name)
+
+}
+
+// Add variance if needed
+class TypeArgument(val type: StubType)
 
 /**
  * Wrapper over [KotlinType].
  */
 class WrapperStubType(
         val kotlinType: KotlinType
-) : StubType()
+) : StubType() {
+    override val nullable: Boolean
+        get() = when (kotlinType) {
+            is KotlinClassifierType -> kotlinType.nullable
+            is KotlinFunctionType -> kotlinType.nullable
+            else -> error("Unknown KotlinType: $kotlinType")
+        }
+}
 
 /**
  * Fallback variant for all cases where we cannot refer to specific [KotlinType].
  */
 class SymbolicStubType(
         val name: String,
-        override val typeParameters: List<StubType> = emptyList()
-) : StubType(), TypeParametersHolder {
+        val typeParameters: List<TypeParameterStub> = emptyList(),
+        override val nullable: Boolean = false
+) : StubType() {
 
-    constructor(classifier: Classifier, typeParameters: List<StubType> = emptyList())
-            : this(classifier.fqName, typeParameters)
+    constructor(
+            classifier: Classifier,
+            typeParameters: List<TypeParameterStub> = emptyList(),
+            nullable: Boolean = false
+    ) : this(classifier.fqName, typeParameters, nullable)
 }
 
 /**
@@ -121,10 +140,6 @@ interface StubElementWithOrigin : StubElement {
 
 interface AnnotationHolder {
     val annotations: List<AnnotationStub>
-}
-
-interface TypeParametersHolder {
-    val typeParameters: List<StubType>
 }
 
 sealed class AnnotationStub {
@@ -274,26 +289,24 @@ enum class MemberStubModality {
     OVERRIDE, OPEN, NONE, FINAL
 }
 
-interface FunctionalStub : AnnotationHolder, TypeParametersHolder, StubElement {
+interface FunctionalStub : AnnotationHolder, StubElement {
     val parameters: List<FunctionParameterStub>
 }
 
-sealed class PropertyAccessor() : FunctionalStub {
+sealed class PropertyAccessor : FunctionalStub {
 
     sealed class Getter : PropertyAccessor() {
         class SimpleGetter(
                 override val annotations: List<AnnotationStub> = emptyList(),
-                val constant: ConstantStub? = null // TODO: Looks like it should be dropped
+                val constant: ConstantStub? = null
         ) : Getter() {
             override val parameters: List<FunctionParameterStub> = emptyList()
-            override val typeParameters: List<StubType> = emptyList()
         }
 
         class ExternalGetter(
                 override val annotations: List<AnnotationStub> = emptyList()
         ) : Getter() {
             override val parameters: List<FunctionParameterStub> = emptyList()
-            override val typeParameters: List<StubType> = emptyList()
         }
 
         class ArrayMemberAt(
@@ -301,12 +314,11 @@ sealed class PropertyAccessor() : FunctionalStub {
         ) : Getter() {
             override val parameters: List<FunctionParameterStub> = emptyList()
             override val annotations: List<AnnotationStub> = emptyList()
-            override val typeParameters: List<StubType> = emptyList()
         }
 
         class MemberAt(
                 val offset: Long,
-                override val typeParameters: List<StubType> = emptyList()
+                val typeParameters: List<StubType> = emptyList()
         ) : Getter() {
             override val parameters: List<FunctionParameterStub> = emptyList()
             override val annotations: List<AnnotationStub> = emptyList()
@@ -320,13 +332,12 @@ sealed class PropertyAccessor() : FunctionalStub {
         ) : Getter() {
             override val parameters: List<FunctionParameterStub> = emptyList()
             override val annotations: List<AnnotationStub> = emptyList()
-            override val typeParameters: List<StubType> = emptyList()
         }
 
         class InterpretPointed(val cGlobalName:String, pointedType: WrapperStubType) : Getter() {
             override val parameters: List<FunctionParameterStub> = emptyList()
             override val annotations: List<AnnotationStub> = emptyList()
-            override val typeParameters: List<StubType> = listOf(pointedType)
+            val typeParameters: List<StubType> = listOf(pointedType)
         }
     }
 
@@ -334,30 +345,25 @@ sealed class PropertyAccessor() : FunctionalStub {
         class SimpleSetter(
                 override val parameters: List<FunctionParameterStub> = emptyList(),
                 override val annotations: List<AnnotationStub> = emptyList()
-        ) : Setter() {
-            override val typeParameters: List<StubType> = emptyList()
-        }
+        ) : Setter()
 
         class ExternalSetter(
                 override val parameters: List<FunctionParameterStub> = emptyList(),
                 override val annotations: List<AnnotationStub> = emptyList()
-        ) : Setter() {
-            override val typeParameters: List<StubType> = emptyList()
-        }
+        ) : Setter()
 
         class MemberAt(
                 val offset: Long,
                 override val parameters: List<FunctionParameterStub> = emptyList(),
                 override val annotations: List<AnnotationStub> = emptyList(),
-                override val typeParameters: List<StubType> = emptyList()
+                val typeParameters: List<StubType> = emptyList()
         ) : Setter()
 
         class WriteBits(
                 val offset: Long,
                 val size: Int,
                 override val parameters: List<FunctionParameterStub> = emptyList(),
-                override val annotations: List<AnnotationStub> = emptyList(),
-                override val typeParameters: List<StubType> = emptyList()
+                override val annotations: List<AnnotationStub> = emptyList()
         ) : Setter()
     }
 
@@ -375,8 +381,7 @@ class FunctionStub(
         val external: Boolean = false,
         val receiverType: StubType?,
         val modality: MemberStubModality,
-        override val typeParameters: List<StubType> = emptyList()
-
+        val typeParameters: List<TypeParameterStub> = emptyList()
 ) : StubElementWithOrigin, FunctionalStub {
     override fun accept(visitor: StubIrVisitor) {
         visitor.visitFunction(this)
@@ -385,8 +390,7 @@ class FunctionStub(
 
 class ConstructorStub(
         override val parameters: List<FunctionParameterStub>,
-        override val annotations: List<AnnotationStub>,
-        override val typeParameters: List<StubType> = emptyList()
+        override val annotations: List<AnnotationStub>
 ) : FunctionalStub {
     override fun accept(visitor: StubIrVisitor) {
         visitor.visitConstructor(this)
