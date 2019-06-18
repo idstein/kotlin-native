@@ -206,7 +206,7 @@ class StubIrTextEmitter(
         }
     }
 
-    private fun EnumVariantStub.isMoreCanonicalThan(other: EnumVariantStub): Boolean = with(other.name.toLowerCase()) {
+    private fun EnumEntryStub.isMoreCanonicalThan(other: EnumEntryStub): Boolean = with(other.name.toLowerCase()) {
         contains("min") || contains("max") ||
                 contains("first") || contains("last") ||
                 contains("begin") || contains("end")
@@ -314,7 +314,7 @@ class StubIrTextEmitter(
     // - "emit" prefix means that method will call `out` by itself.
     // - "render" prefix means that method returns string that should be emitted by caller.
     private fun emitEnumBody(enum: ClassStub.Enum) {
-        val canonicalsByValue = enum.variants
+        val canonicalsByValue = enum.entries
                 .groupingBy { it.constant.value }
                 .reduce { _, accumulator, element ->
                     if (element.isMoreCanonicalThan(accumulator)) {
@@ -324,7 +324,7 @@ class StubIrTextEmitter(
                     }
                 }
 
-        val (canonicalConstants, aliasConstants) = enum.variants.partition { canonicalsByValue[it.constant.value] == it }
+        val (canonicalConstants, aliasConstants) = enum.entries.partition { canonicalsByValue[it.constant.value] == it }
 
         canonicalConstants.forEach {
             renderEnumVariant(it)
@@ -508,13 +508,8 @@ class StubIrTextEmitter(
     }
 
     private fun renderStubType(stubType: StubType): String = when (stubType) {
-//        is TypeParameterStub -> {
-//            val nullableSymbol = if (stubType.nullable) "?" else ""
-//            val upperBound = if (stubType.upperBound != null) " : " + renderStubType(stubType.upperBound) else ""
-//            "${stubType.name}$nullableSymbol$upperBound"
-//        }
         is WrapperStubType -> stubType.kotlinType.render(kotlinFile)
-        is SymbolicStubType -> stubType.name
+        is SymbolicStubType -> stubType.name + renderTypeParameters(stubType.typeParameters)
     }
 
     private fun renderValueUsage(value: ValueStub): String = when (value) {
@@ -553,8 +548,8 @@ class StubIrTextEmitter(
             "@CLength(${annotationStub.length})"
     }
 
-    private fun renderEnumVariant(enumVariantStub: EnumVariantStub): String =
-            "${enumVariantStub.name}(${renderValueUsage(enumVariantStub.constant)})"
+    private fun renderEnumVariant(enumEntryStub: EnumEntryStub): String =
+            "${enumEntryStub.name}(${renderValueUsage(enumEntryStub.constant)})"
 
     private fun renderPropertyAccessor(accessor: PropertyAccessor): String = when (accessor) {
         is PropertyAccessor.Getter.SimpleGetter -> {

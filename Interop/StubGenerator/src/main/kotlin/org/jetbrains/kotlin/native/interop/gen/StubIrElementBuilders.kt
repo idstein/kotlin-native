@@ -187,7 +187,7 @@ internal class EnumStubBuilder(
         val enumVariants = enumDef.constants.map {
             val literal = context.tryCreateIntegralStub(enumDef.baseType, it.value)
                     ?: error("Cannot create enum value ${it.value} of type ${enumDef.baseType}")
-            EnumVariantStub(it.name.asSimpleName(), literal)
+            EnumEntryStub(it.name.asSimpleName(), literal)
         }
 
         val qualifier = ConstructorParamStub.Qualifier.VAL(overrides = true)
