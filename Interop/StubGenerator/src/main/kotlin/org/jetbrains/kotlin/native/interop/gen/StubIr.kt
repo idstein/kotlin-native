@@ -97,6 +97,10 @@ sealed class StubOrigin {
             val clazz: org.jetbrains.kotlin.native.interop.indexer.ObjCClass
     ) : StubOrigin()
 
+    class ObjCProtocol(
+            val protocol: org.jetbrains.kotlin.native.interop.indexer.ObjCProtocol
+    ) : StubOrigin()
+
     class Enum(val enum: EnumDef) : StubOrigin()
 
     class Function(val function: FunctionDecl) : StubOrigin()

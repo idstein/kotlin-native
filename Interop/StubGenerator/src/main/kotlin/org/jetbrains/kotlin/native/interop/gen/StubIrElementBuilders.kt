@@ -679,10 +679,7 @@ internal abstract class ObjCContainerStubBuilder(
             protocolGetter = if (metaContainerStub != null) {
                 metaContainerStub.protocolGetter!!
             } else {
-//                    val nativeBacked = object : NativeBacked {}
                 // TODO: handle the case when protocol getter stub can't be compiled.
-//                    genProtocolGetter(context, nativeBacked, container)
-                // TODO: Decide, when to generaete Function name
                 context.generateNextUniqueId("kniprot_")
             }
             AnnotationStub.ObjC.ExternalClass(protocolGetter)
@@ -752,15 +749,17 @@ internal sealed class ObjCClassOrProtocolStubBuilder(
         }
 )
 
-internal class ObjCProtocolStubBuilder(context: StubsBuildingContext, protocol: ObjCProtocol) :
-        ObjCClassOrProtocolStubBuilder(context, protocol), StubElementBuilder {
+internal class ObjCProtocolStubBuilder(
+        context: StubsBuildingContext,
+        private val protocol: ObjCProtocol
+) : ObjCClassOrProtocolStubBuilder(context, protocol), StubElementBuilder {
     override fun build(): List<StubElement> {
         val (properties, methods) = buildBody()
         val classStub = ClassStub.Simple(
                 super.classifier,
                 properties = properties,
                 functions = methods,
-                origin = StubOrigin.None,
+                origin = StubOrigin.ObjCProtocol(protocol),
                 modality = super.modality
         )
         return listOf(classStub, *metaContainerStub!!.build().toTypedArray())

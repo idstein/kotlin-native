@@ -217,6 +217,12 @@ class StubIrTextEmitter(
             element.annotations.forEach {
                 out(renderAnnotation(it))
             }
+            element.annotations.filterIsInstance<AnnotationStub.ObjC.ExternalClass>().firstOrNull()?.let {
+                if (it.protocolGetter.isNotEmpty()) {
+                    val protocol = (element.origin as StubOrigin.ObjCProtocol).protocol
+                    emitProtocolGetter(it.protocolGetter, protocol)
+                }
+            }
             block(renderClassHeader(element)) {
                 if (element is ClassStub.Enum) {
                     emitEnumBody(element)
@@ -346,6 +352,18 @@ class StubIrTextEmitter(
             out("    get() = byValue(this.reinterpret<$basePointedTypeName>().value)")
             out("    set(value) { this.reinterpret<$basePointedTypeName>().value = value.value }")
         }
+    }
+
+    private fun emitProtocolGetter(protocolGetterName: String, protocol: ObjCProtocol) {
+        val builder = NativeCodeBuilder(simpleBridgeGenerator.topLevelNativeScope)
+        val nativeBacked = object : NativeBacked {}
+        with(builder) {
+            out("Protocol* $protocolGetterName() {")
+            out("    return @protocol(${protocol.name});")
+            out("}")
+        }
+
+        simpleBridgeGenerator.insertNativeBridge(nativeBacked, emptyList(), builder.lines)
     }
 
     private fun renderFunctionParameter(parameter: FunctionParameterStub): String {
@@ -517,8 +535,9 @@ class StubIrTextEmitter(
             "@CCall.Consumed"
         is AnnotationStub.ObjC.Constructor ->
             "@ObjCConstructor(${annotationStub.selector.quoteAsKotlinLiteral()}, ${annotationStub.designated})"
-        is AnnotationStub.ObjC.ExternalClass ->
+        is AnnotationStub.ObjC.ExternalClass -> {
             "@ExternalObjCClass(${annotationStub.protocolGetter.quoteAsKotlinLiteral()}, ${annotationStub.binaryName.quoteAsKotlinLiteral()})"
+        }
         AnnotationStub.CCall.CString ->
             "@CCall.CString"
         AnnotationStub.CCall.WCString ->
