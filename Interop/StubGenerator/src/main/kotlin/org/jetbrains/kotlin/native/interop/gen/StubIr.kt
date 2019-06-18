@@ -72,8 +72,6 @@ class SymbolicStubType(
             : this(classifier.fqName, typeParameters)
 }
 
-//class SimpleStubType() : StubType()
-
 /**
  * Represents a source of StubIr element.
  */
@@ -265,12 +263,9 @@ enum class MemberStubModality {
     OVERRIDE, OPEN, NONE, FINAL
 }
 
-// TODO: Move here common fields of functions, methods and constructors.
 interface FunctionalStub : AnnotationHolder, TypeParametersHolder, StubElement {
     val parameters: List<FunctionParameterStub>
 }
-
-// TODO: Clean up hierarchy
 
 sealed class PropertyAccessor() : FunctionalStub {
 
@@ -327,8 +322,7 @@ sealed class PropertyAccessor() : FunctionalStub {
     sealed class Setter : PropertyAccessor() {
         class SimpleSetter(
                 override val parameters: List<FunctionParameterStub> = emptyList(),
-                override val annotations: List<AnnotationStub> = emptyList(),
-                val external: Boolean = false
+                override val annotations: List<AnnotationStub> = emptyList()
         ) : Setter() {
             override val typeParameters: List<StubType> = emptyList()
         }
@@ -391,11 +385,7 @@ class ConstructorStub(
 class EnumVariantStub(
         val name: String,
         val constant: IntegralConstantStub
-) : StubElement {
-    override fun accept(visitor: StubIrVisitor) {
-        visitor.visitEnumVariant(this)
-    }
-}
+)
 
 class TypealiasStub(
         val alias: StubType,

@@ -12,8 +12,6 @@ interface StubIrVisitor {
 
     fun visitProperty(element: PropertyStub)
 
-    fun visitEnumVariant(enumVariantStub: EnumVariantStub)
-
     fun visitConstructor(constructorStub: ConstructorStub)
 
     fun visitPropertyAccessor(propertyAccessor: PropertyAccessor)

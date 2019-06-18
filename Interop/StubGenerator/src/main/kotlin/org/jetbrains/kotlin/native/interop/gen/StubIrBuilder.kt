@@ -25,8 +25,30 @@ data class StubIrBuilderResult(
         val stubs: Stubs,
         val declarationMapper: DeclarationMapper,
         val namesToBeDeclared: List<String>,
-        val bridgeGeneratingExtras: BridgeGeneratingExtras
+        val bridgeGenerationComponents: BridgeGenerationComponents
 )
+
+/**
+ * Additional components that are required to generate bridges.
+ */
+interface BridgeGenerationComponents {
+    class GlobalSetterBridgeInfo(
+            val cGlobalName: String,
+            val typeInfo: TypeInfo
+    )
+
+    class GlobalGetterBridgeInfo(
+            val cGlobalName: String,
+            val typeInfo: TypeInfo,
+            val isArray: Boolean
+    )
+
+    val setterToBridgeInfo: Map<PropertyAccessor.Setter.SimpleSetter, GlobalSetterBridgeInfo>
+
+    val getterToBridgeInfo: Map<PropertyAccessor.Getter.SimpleGetter, GlobalGetterBridgeInfo>
+
+    val enumToTypeMirror: Map<ClassStub.Enum, TypeMirror>
+}
 
 interface StubsBuildingContext {
     val configuration: InteropConfiguration
@@ -49,9 +71,9 @@ interface StubsBuildingContext {
 
     fun tryCreateDoubleStub(type: Type, value: Double): DoubleConstantStub?
 
-    val getterToBridgeInfo: MutableMap<PropertyAccessor.Getter.SimpleGetter, BridgeGeneratingExtras.GlobalGetterBridgeInfo>
+    val getterToBridgeInfo: MutableMap<PropertyAccessor.Getter.SimpleGetter, BridgeGenerationComponents.GlobalGetterBridgeInfo>
 
-    val setterToBridgeInfo: MutableMap<PropertyAccessor.Setter.SimpleSetter, BridgeGeneratingExtras.GlobalSetterBridgeInfo>
+    val setterToBridgeInfo: MutableMap<PropertyAccessor.Setter.SimpleSetter, BridgeGenerationComponents.GlobalSetterBridgeInfo>
 
     val enumToTypeMirror: MutableMap<ClassStub.Enum, TypeMirror>
 }
@@ -238,10 +260,10 @@ class StubsBuildingContextImpl(
     }
 
     override val getterToBridgeInfo =
-            mutableMapOf<PropertyAccessor.Getter.SimpleGetter, BridgeGeneratingExtras.GlobalGetterBridgeInfo>()
+            mutableMapOf<PropertyAccessor.Getter.SimpleGetter, BridgeGenerationComponents.GlobalGetterBridgeInfo>()
 
     override val setterToBridgeInfo =
-            mutableMapOf<PropertyAccessor.Setter.SimpleSetter, BridgeGeneratingExtras.GlobalSetterBridgeInfo>()
+            mutableMapOf<PropertyAccessor.Setter.SimpleSetter, BridgeGenerationComponents.GlobalSetterBridgeInfo>()
 
     override val enumToTypeMirror = mutableMapOf<ClassStub.Enum, TypeMirror>()
 }
@@ -294,7 +316,7 @@ class StubIrBuilder(
 
         val meta = StubContainerMeta()
         val stubs = Stubs(classes, functions, globals, typealiases, containers,meta)
-        val extras = object : BridgeGeneratingExtras {
+        val extras = object : BridgeGenerationComponents {
             override val getterToBridgeInfo = this@StubIrBuilder.buildingContext.getterToBridgeInfo
 
             override val setterToBridgeInfo = this@StubIrBuilder.buildingContext.setterToBridgeInfo

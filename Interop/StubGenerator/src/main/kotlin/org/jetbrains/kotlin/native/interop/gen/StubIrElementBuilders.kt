@@ -414,7 +414,7 @@ internal class GlobalStubBuilder(
         if (unwrappedType is ArrayType) {
             kotlinType = (mirror as TypeMirror.ByValue).valueType
             val getter = PropertyAccessor.Getter.SimpleGetter()
-            val extra = BridgeGeneratingExtras.GlobalGetterBridgeInfo(global.name, mirror.info, isArray = true)
+            val extra = BridgeGenerationComponents.GlobalGetterBridgeInfo(global.name, mirror.info, isArray = true)
             buildingContext.getterToBridgeInfo[getter] = extra
             kind = PropertyStub.Kind.Val(getter)
         } else {
@@ -422,13 +422,13 @@ internal class GlobalStubBuilder(
                 is TypeMirror.ByValue -> {
                     kotlinType = mirror.argType
                     val getter = PropertyAccessor.Getter.SimpleGetter()
-                    val getterExtra = BridgeGeneratingExtras.GlobalGetterBridgeInfo(global.name, mirror.info, isArray = false)
+                    val getterExtra = BridgeGenerationComponents.GlobalGetterBridgeInfo(global.name, mirror.info, isArray = false)
                     buildingContext.getterToBridgeInfo[getter] = getterExtra
                     kind = if (global.isConst) {
                         PropertyStub.Kind.Val(getter)
                     } else {
                         val setter = PropertyAccessor.Setter.SimpleSetter()
-                        val setterExtra = BridgeGeneratingExtras.GlobalSetterBridgeInfo(global.name, mirror.info)
+                        val setterExtra = BridgeGenerationComponents.GlobalSetterBridgeInfo(global.name, mirror.info)
                         buildingContext.setterToBridgeInfo[setter] = setterExtra
                         PropertyStub.Kind.Var(getter, setter)
                     }

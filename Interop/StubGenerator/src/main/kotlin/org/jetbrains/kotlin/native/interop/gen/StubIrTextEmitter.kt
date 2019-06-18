@@ -6,29 +6,6 @@ import org.jetbrains.kotlin.native.interop.indexer.*
 import org.jetbrains.kotlin.utils.addToStdlib.firstIsInstance
 import java.lang.IllegalStateException
 
-/**
- * Additional components that are required to generate bridges
- */
-interface BridgeGeneratingExtras {
-    class GlobalSetterBridgeInfo(
-            val cGlobalName: String,
-            val typeInfo: TypeInfo
-    )
-
-    class GlobalGetterBridgeInfo(
-            val cGlobalName: String,
-            val typeInfo: TypeInfo,
-            val isArray: Boolean
-    )
-
-    val setterToBridgeInfo: Map<PropertyAccessor.Setter.SimpleSetter, GlobalSetterBridgeInfo>
-
-    val getterToBridgeInfo: Map<PropertyAccessor.Getter.SimpleGetter, GlobalGetterBridgeInfo>
-
-    val enumToTypeMirror: Map<ClassStub.Enum, TypeMirror>
-}
-
-
 
 class StubIrTextEmitter(
         private val configuration: InteropConfiguration,
@@ -266,7 +243,8 @@ class StubIrTextEmitter(
                 out(renderAnnotation(it))
             }
             val parameters = element.parameters.joinToString(prefix = "(", postfix = ")") { renderFunctionParameter(it) }
-            block("$external${modality}fun ${element.name}$parameters: ${renderStubType(element.returnType)}") {
+            val receiver = element.receiverType?.let { renderStubType(it) + "." } ?: ""
+            block("$external${modality}fun $receiver${element.name}$parameters: ${renderStubType(element.returnType)}") {
                 renderBridgeBody(element)
             }
         }
@@ -302,13 +280,12 @@ class StubIrTextEmitter(
             }
         }
 
-        override fun visitEnumVariant(enumVariantStub: EnumVariantStub) {
-        }
-
         override fun visitConstructor(constructorStub: ConstructorStub) {
+
         }
 
         override fun visitPropertyAccessor(propertyAccessor: PropertyAccessor) {
+
         }
 
         override fun visitSimpleStubContainer(simpleStubContainer: SimpleStubContainer) {
@@ -343,7 +320,7 @@ class StubIrTextEmitter(
         }
 
         val simpleKotlinName = enum.classifier.topLevelName.asSimpleName()
-        val typeMirror = builderResult.bridgeGeneratingExtras.enumToTypeMirror.getValue(enum)
+        val typeMirror = builderResult.bridgeGenerationComponents.enumToTypeMirror.getValue(enum)
         val baseKotlinType = typeMirror.argType.render(kotlinFile)
         val basePointedTypeName = typeMirror.pointedType.render(kotlinFile)
 
@@ -547,8 +524,8 @@ class StubIrTextEmitter(
         is PropertyAccessor.Getter.SimpleGetter -> {
             when {
                 accessor.constant != null -> " = ${renderValueUsage(accessor.constant)}"
-                accessor in builderResult.bridgeGeneratingExtras.getterToBridgeInfo -> {
-                    val extra = builderResult.bridgeGeneratingExtras.getterToBridgeInfo.getValue(accessor)
+                accessor in builderResult.bridgeGenerationComponents.getterToBridgeInfo -> {
+                    val extra = builderResult.bridgeGenerationComponents.getterToBridgeInfo.getValue(accessor)
                     val typeInfo = extra.typeInfo
                     val expression = if (extra.isArray) {
                         val getAddressExpression = getGlobalAddressExpression(extra.cGlobalName)
@@ -586,8 +563,8 @@ class StubIrTextEmitter(
         }
 
         is PropertyAccessor.Setter.SimpleSetter -> when {
-            accessor in builderResult.bridgeGeneratingExtras.setterToBridgeInfo -> {
-                val extra = builderResult.bridgeGeneratingExtras.setterToBridgeInfo.getValue(accessor)
+            accessor in builderResult.bridgeGenerationComponents.setterToBridgeInfo -> {
+                val extra = builderResult.bridgeGenerationComponents.setterToBridgeInfo.getValue(accessor)
                 val typeInfo = extra.typeInfo
                 val bridgedValue = BridgeTypedKotlinValue(typeInfo.bridgedType, typeInfo.argToBridged("value"))
 
