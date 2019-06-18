@@ -111,7 +111,7 @@ internal class StructStubBuilder(
             val signed = field.type.isIntegerTypeSigned()
             // TODO: Type conversion?
             val kind = PropertyStub.Kind.Var(
-                    PropertyAccessor.Getter.ReadBits(field.offset, field.size, signed),
+                    PropertyAccessor.Getter.ReadBits(field.offset, field.size, signed, rawType),
                     PropertyAccessor.Setter.WriteBits(field.offset, field.size)
             )
             PropertyStub(field.name.asSimpleName(), WrapperStubType(kotlinType), kind)
@@ -183,7 +183,6 @@ internal class EnumStubBuilder(
         }
 
         val baseTypeMirror = buildingContext.mirror(enumDef.baseType)
-        val pointedType = WrapperStubType(baseTypeMirror.pointedType)
         val baseType = WrapperStubType(baseTypeMirror.argType)
 
         val clazz = (buildingContext.mirror(EnumType(enumDef)) as TypeMirror.ByValue).valueType.classifier
@@ -201,13 +200,15 @@ internal class EnumStubBuilder(
         // TODO: It's an interface.
         val superClassInit = SuperClassInit(SymbolicStubType("CEnum"))
 
-        return listOf(ClassStub.Enum(clazz, enumVariants,
-                baseType = baseType,
-                pointedType = pointedType,
+
+        val enum = ClassStub.Enum(clazz, enumVariants,
                 origin = StubOrigin.Enum(enumDef),
                 constructorParams = listOf(valueParamStub),
                 superClassInit = superClassInit
-        ))
+        )
+        buildingContext.enumToTypeMirror[enum] = baseTypeMirror
+
+        return listOf(enum)
     }
 
     /**
@@ -412,17 +413,23 @@ internal class GlobalStubBuilder(
         val kind: PropertyStub.Kind
         if (unwrappedType is ArrayType) {
             kotlinType = (mirror as TypeMirror.ByValue).valueType
-            val getter = PropertyAccessor.Getter.BridgedGetter(global.name, mirror.info, isArray = true)
+            val getter = PropertyAccessor.Getter.SimpleGetter()
+            val extra = BridgeGeneratingExtras.GlobalGetterBridgeInfo(global.name, mirror.info, isArray = true)
+            buildingContext.getterToBridgeInfo[getter] = extra
             kind = PropertyStub.Kind.Val(getter)
         } else {
             when (mirror) {
                 is TypeMirror.ByValue -> {
                     kotlinType = mirror.argType
-                    val getter = PropertyAccessor.Getter.BridgedGetter(global.name, mirror.info, isArray = false)
+                    val getter = PropertyAccessor.Getter.SimpleGetter()
+                    val getterExtra = BridgeGeneratingExtras.GlobalGetterBridgeInfo(global.name, mirror.info, isArray = false)
+                    buildingContext.getterToBridgeInfo[getter] = getterExtra
                     kind = if (global.isConst) {
                         PropertyStub.Kind.Val(getter)
                     } else {
-                        val setter = PropertyAccessor.Setter.BridgedSetter(global.name, mirror.info)
+                        val setter = PropertyAccessor.Setter.SimpleSetter()
+                        val setterExtra = BridgeGeneratingExtras.GlobalSetterBridgeInfo(global.name, mirror.info)
+                        buildingContext.setterToBridgeInfo[setter] = setterExtra
                         PropertyStub.Kind.Var(getter, setter)
                     }
                 }
@@ -554,7 +561,7 @@ private class ObjCMethodBuilder(
                         this.stubReturnType
                     }
                     val typeParameter = TypeParameterStub("T", WrapperStubType(clazz))
-                    val receiverType = WrapperStubType(KotlinTypes.objCClassOf.type, listOf(typeParameter))
+                    val receiverType = SymbolicStubType(KotlinTypes.objCClassOf, listOf(typeParameter))
                     val createMethod = FunctionStub(
                             "create",
                             returnType,

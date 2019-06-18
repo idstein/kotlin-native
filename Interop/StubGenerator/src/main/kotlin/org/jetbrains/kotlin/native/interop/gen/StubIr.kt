@@ -57,19 +57,19 @@ class TypeParameterStub(
  * Wrapper over [KotlinType].
  */
 class WrapperStubType(
-        val kotlinType: KotlinType,
-        override val typeParameters: List<StubType> = emptyList()
-) : StubType(), TypeParametersHolder
+        val kotlinType: KotlinType
+) : StubType()
 
 /**
  * Fallback variant for all cases where we cannot refer to specific [KotlinType].
  */
 class SymbolicStubType(
-        // TODO: use fq instead of just name.
         val name: String,
         override val typeParameters: List<StubType> = emptyList()
 ) : StubType(), TypeParametersHolder {
-    constructor(classifier: Classifier) : this(classifier.fqName, emptyList())
+
+    constructor(classifier: Classifier, typeParameters: List<StubType> = emptyList())
+            : this(classifier.fqName, typeParameters)
 }
 
 //class SimpleStubType() : StubType()
@@ -230,8 +230,6 @@ sealed class ClassStub : StubElementWithOrigin, StubContainer, AnnotationHolder 
             val classifier: Classifier,
             val variants: List<EnumVariantStub>,
             val constructorParams: List<ConstructorParamStub> = emptyList(),
-            val baseType: WrapperStubType,
-            val pointedType: WrapperStubType,
             override val superClassInit: SuperClassInit? = null,
             override val interfaces: List<StubType> = emptyList(),
             override val properties: List<PropertyStub> = emptyList(),
@@ -311,15 +309,9 @@ sealed class PropertyAccessor() : FunctionalStub {
         class ReadBits(
                 val offset: Long,
                 val size: Int,
-                val signed: Boolean
+                val signed: Boolean,
+                val rawType: BridgedType
         ) : Getter() {
-            override val parameters: List<FunctionParameterStub> = emptyList()
-            override val annotations: List<AnnotationStub> = emptyList()
-            override val typeParameters: List<StubType> = emptyList()
-        }
-
-        // Hackey hack.
-        class BridgedGetter(val cGlobalName: String, val typeInfo: TypeInfo, val isArray: Boolean) : Getter() {
             override val parameters: List<FunctionParameterStub> = emptyList()
             override val annotations: List<AnnotationStub> = emptyList()
             override val typeParameters: List<StubType> = emptyList()
@@ -362,13 +354,6 @@ sealed class PropertyAccessor() : FunctionalStub {
                 override val annotations: List<AnnotationStub> = emptyList(),
                 override val typeParameters: List<StubType> = emptyList()
         ) : Setter()
-
-        // Hackey hack.
-        class BridgedSetter(val cGlobalName: String, val typeInfo: TypeInfo) : Setter() {
-            override val parameters: List<FunctionParameterStub> = emptyList()
-            override val annotations: List<AnnotationStub> = emptyList()
-            override val typeParameters: List<StubType> = emptyList()
-        }
     }
 
     override fun accept(visitor: StubIrVisitor) {

@@ -10,9 +10,7 @@ class Stubs(
         override val properties: List<PropertyStub>,
         override val typealiases: List<TypealiasStub>,
         override val simpleContainers: List<SimpleStubContainer>,
-        override val meta: StubContainerMeta,
-        val declarationMapper: DeclarationMapper,
-        val namesToBeDeclared: List<String>
+        override val meta: StubContainerMeta
 ) : StubContainer {
     override fun accept(visitor: StubIrVisitor) {
         classes.forEach { it.accept(visitor) }
@@ -22,6 +20,13 @@ class Stubs(
         simpleContainers.forEach { it.accept(visitor) }
     }
 }
+
+data class StubIrBuilderResult(
+        val stubs: Stubs,
+        val declarationMapper: DeclarationMapper,
+        val namesToBeDeclared: List<String>,
+        val bridgeGeneratingExtras: BridgeGeneratingExtras
+)
 
 interface StubsBuildingContext {
     val configuration: InteropConfiguration
@@ -43,6 +48,12 @@ interface StubsBuildingContext {
     fun tryCreateIntegralStub(type: Type, value: Long): IntegralConstantStub?
 
     fun tryCreateDoubleStub(type: Type, value: Double): DoubleConstantStub?
+
+    val getterToBridgeInfo: MutableMap<PropertyAccessor.Getter.SimpleGetter, BridgeGeneratingExtras.GlobalGetterBridgeInfo>
+
+    val setterToBridgeInfo: MutableMap<PropertyAccessor.Setter.SimpleSetter, BridgeGeneratingExtras.GlobalSetterBridgeInfo>
+
+    val enumToTypeMirror: MutableMap<ClassStub.Enum, TypeMirror>
 }
 
 class StubsBuildingContextImpl(
@@ -225,6 +236,14 @@ class StubsBuildingContextImpl(
         val unwrappedType = type.unwrapTypedefs() as? FloatingType ?: return null
         return DoubleConstantStub(value)
     }
+
+    override val getterToBridgeInfo =
+            mutableMapOf<PropertyAccessor.Getter.SimpleGetter, BridgeGeneratingExtras.GlobalGetterBridgeInfo>()
+
+    override val setterToBridgeInfo =
+            mutableMapOf<PropertyAccessor.Setter.SimpleSetter, BridgeGeneratingExtras.GlobalSetterBridgeInfo>()
+
+    override val enumToTypeMirror = mutableMapOf<ClassStub.Enum, TypeMirror>()
 }
 
 class StubIrBuilder(
@@ -261,7 +280,7 @@ class StubIrBuilder(
 
     private val buildingContext = StubsBuildingContextImpl(configuration, platform, imports, nativeIndex)
 
-    fun build(): Stubs {
+    fun build(): StubIrBuilderResult {
         nativeIndex.objCProtocols.forEach { generateStubsForObjCProtocol(it) }
         nativeIndex.objCClasses.forEach { generateStubsForObjCClass(it) }
         nativeIndex.objCCategories.forEach { generateStubsForObjCCategory(it) }
@@ -274,8 +293,16 @@ class StubIrBuilder(
         nativeIndex.wrappedMacros.filter { it.name !in excludedMacros }.forEach { generateStubsForWrappedMacro(it) }
 
         val meta = StubContainerMeta()
-        return Stubs(classes, functions, globals, typealiases, containers,
-                meta, buildingContext.declarationMapper, buildingContext.computeNamesToBeDeclared())
+        val stubs = Stubs(classes, functions, globals, typealiases, containers,meta)
+        val extras = object : BridgeGeneratingExtras {
+            override val getterToBridgeInfo = this@StubIrBuilder.buildingContext.getterToBridgeInfo
+
+            override val setterToBridgeInfo = this@StubIrBuilder.buildingContext.setterToBridgeInfo
+
+            override val enumToTypeMirror = this@StubIrBuilder.buildingContext.enumToTypeMirror
+        }
+        val result = StubIrBuilderResult(stubs, buildingContext.declarationMapper, buildingContext.computeNamesToBeDeclared(), extras)
+        return result
     }
 
     private fun generateStubsForWrappedMacro(macro: WrappedMacroDef) {

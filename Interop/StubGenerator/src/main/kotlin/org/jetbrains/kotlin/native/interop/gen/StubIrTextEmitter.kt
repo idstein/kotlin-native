@@ -6,11 +6,35 @@ import org.jetbrains.kotlin.native.interop.indexer.*
 import org.jetbrains.kotlin.utils.addToStdlib.firstIsInstance
 import java.lang.IllegalStateException
 
+/**
+ * Additional components that are required to generate bridges
+ */
+interface BridgeGeneratingExtras {
+    class GlobalSetterBridgeInfo(
+            val cGlobalName: String,
+            val typeInfo: TypeInfo
+    )
+
+    class GlobalGetterBridgeInfo(
+            val cGlobalName: String,
+            val typeInfo: TypeInfo,
+            val isArray: Boolean
+    )
+
+    val setterToBridgeInfo: Map<PropertyAccessor.Setter.SimpleSetter, GlobalSetterBridgeInfo>
+
+    val getterToBridgeInfo: Map<PropertyAccessor.Getter.SimpleGetter, GlobalGetterBridgeInfo>
+
+    val enumToTypeMirror: Map<ClassStub.Enum, TypeMirror>
+}
+
+
+
 class StubIrTextEmitter(
         private val configuration: InteropConfiguration,
         private val libName: String,
         private val platform: KotlinPlatform,
-        private val stubs: Stubs,
+        private val builderResult: StubIrBuilderResult,
         private val ktFile: Appendable,
         private val cFile: Appendable,
         private val entryPoint: String?
@@ -18,7 +42,7 @@ class StubIrTextEmitter(
 
     private val fakeNativeBackedStub = object : NativeBacked {}
 
-    private val StubElement.isTopLevel get() = this in stubs.children
+    private val StubElement.isTopLevel get() = this in builderResult.stubs.children
 
     private val pkgName: String
         get() = configuration.pkgName
@@ -48,9 +72,9 @@ class StubIrTextEmitter(
                     }
     )
 
-    private val declarationMapper = stubs.declarationMapper
+    private val declarationMapper = builderResult.declarationMapper
 
-    private val kotlinFile = object : KotlinFile(pkgName, namesToBeDeclared = stubs.namesToBeDeclared) {
+    private val kotlinFile = object : KotlinFile(pkgName, namesToBeDeclared = builderResult.namesToBeDeclared) {
         override val mappingBridgeGenerator: MappingBridgeGenerator
             get() = this@StubIrTextEmitter.mappingBridgeGenerator
     }
@@ -169,7 +193,7 @@ class StubIrTextEmitter(
     fun emit() {
         withOutput(ktFile) {
             generateKotlinFileHeader()
-            printer.visitContainer(stubs)
+            printer.visitContainer(builderResult.stubs)
         }
         val nativeBridges = simpleBridgeGenerator.prepare()
 
@@ -319,8 +343,9 @@ class StubIrTextEmitter(
         }
 
         val simpleKotlinName = enum.classifier.topLevelName.asSimpleName()
-        val baseKotlinType = enum.baseType.kotlinType
-        val basePointedTypeName = enum.pointedType.kotlinType.render(kotlinFile)
+        val typeMirror = builderResult.bridgeGeneratingExtras.enumToTypeMirror.getValue(enum)
+        val baseKotlinType = typeMirror.argType.render(kotlinFile)
+        val basePointedTypeName = typeMirror.pointedType.render(kotlinFile)
 
         out(";")
         block("companion object") {
@@ -503,15 +528,15 @@ class StubIrTextEmitter(
     private fun renderAnnotation(annotationStub: AnnotationStub): String = when (annotationStub) {
         AnnotationStub.ObjC.ConsumesReceiver -> "@CCall.ConsumesReceiver"
         AnnotationStub.ObjC.ReturnsRetained -> "@CCall.ReturnsRetained"
-        is AnnotationStub.ObjC.Method -> "@ObjCMethod(${annotationStub.selector}, ${annotationStub.encoding}, ${annotationStub.isStret})"
-        is AnnotationStub.ObjC.Factory -> "@ObjCFactory(${annotationStub.selector}, ${annotationStub.encoding}, ${annotationStub.isStret})"
+        is AnnotationStub.ObjC.Method -> "@ObjCMethod(\"${annotationStub.selector}\", \"${annotationStub.encoding}\", ${annotationStub.isStret})"
+        is AnnotationStub.ObjC.Factory -> "@ObjCFactory(\"${annotationStub.selector}\", \"${annotationStub.encoding}\", ${annotationStub.isStret})"
         AnnotationStub.ObjC.Consumed -> "@CCall.Consumed"
-        is AnnotationStub.ObjC.Constructor -> "@ObjCConstructor(${annotationStub.selector}, ${annotationStub.designated})"
+        is AnnotationStub.ObjC.Constructor -> "@ObjCConstructor(\"${annotationStub.selector}\", ${annotationStub.designated})"
         AnnotationStub.CCall.CString -> "@CCall.CString"
         AnnotationStub.CCall.WCString -> "@CCall.WCString"
-        is AnnotationStub.CCall.Symbol -> "@CCall(${annotationStub.symbolName})"
-        is AnnotationStub.CStruct -> "@CStruct(${annotationStub.struct})"
-        is AnnotationStub.CNaturalStruct -> "@CNaturalStruct(${annotationStub.struct})"
+        is AnnotationStub.CCall.Symbol -> "@CCall(\"${annotationStub.symbolName}\")"
+        is AnnotationStub.CStruct -> "@CStruct(\"${annotationStub.struct}\")"
+        is AnnotationStub.CNaturalStruct -> "@CNaturalStruct(\"${annotationStub.struct}\")"
         is AnnotationStub.CLength -> "@CLength(${annotationStub.length})"
     }
 
@@ -522,6 +547,24 @@ class StubIrTextEmitter(
         is PropertyAccessor.Getter.SimpleGetter -> {
             when {
                 accessor.constant != null -> " = ${renderValueUsage(accessor.constant)}"
+                accessor in builderResult.bridgeGeneratingExtras.getterToBridgeInfo -> {
+                    val extra = builderResult.bridgeGeneratingExtras.getterToBridgeInfo.getValue(accessor)
+                    val typeInfo = extra.typeInfo
+                    val expression = if (extra.isArray) {
+                        val getAddressExpression = getGlobalAddressExpression(extra.cGlobalName)
+                        typeInfo.argFromBridged(getAddressExpression, kotlinFile, nativeBacked = this) + "!!"
+                    } else {
+                        typeInfo.argFromBridged(simpleBridgeGenerator.kotlinToNative(
+                                nativeBacked = this,
+                                returnType = typeInfo.bridgedType,
+                                kotlinValues = emptyList(),
+                                independent = false
+                        ) {
+                            typeInfo.cToBridged(expr = extra.cGlobalName)
+                        }, kotlinFile, nativeBacked = this)
+                    }
+                    "get() = $expression"
+                }
                 else -> TODO()
             }
         }
@@ -539,10 +582,31 @@ class StubIrTextEmitter(
         }
 
         is PropertyAccessor.Getter.ReadBits -> {
-            "get() = readBits(this.rawPtr, ${accessor.offset}, ${accessor.size}, ${accessor.signed})"
+            "get() = readBits(this.rawPtr, ${accessor.offset}, ${accessor.size}, ${accessor.signed}).${accessor.rawType.convertor}()!!"
         }
 
-        is PropertyAccessor.Setter.SimpleSetter -> TODO()
+        is PropertyAccessor.Setter.SimpleSetter -> when {
+            accessor in builderResult.bridgeGeneratingExtras.setterToBridgeInfo -> {
+                val extra = builderResult.bridgeGeneratingExtras.setterToBridgeInfo.getValue(accessor)
+                val typeInfo = extra.typeInfo
+                val bridgedValue = BridgeTypedKotlinValue(typeInfo.bridgedType, typeInfo.argToBridged("value"))
+
+                "set(value) { " + simpleBridgeGenerator.kotlinToNative(
+                        nativeBacked = fakeNativeBackedStub,
+                        returnType = BridgedType.VOID,
+                        kotlinValues = listOf(bridgedValue),
+                        independent = false
+                ) { nativeValues ->
+                    out("${extra.cGlobalName} = ${typeInfo.cFromBridged(
+                            nativeValues.single(),
+                            scope,
+                            nativeBacked = fakeNativeBackedStub
+                    )};")
+                    ""
+                } + " }"
+            }
+            else -> TODO()
+        }
 
         is PropertyAccessor.Setter.MemberAt -> {
             if (accessor.typeParameters.isEmpty()) {
@@ -559,47 +623,10 @@ class StubIrTextEmitter(
 
         is PropertyAccessor.Setter.ExternalSetter -> "external set(TODO)"
 
-        is PropertyAccessor.Getter.BridgedGetter -> {
-            val typeInfo = accessor.typeInfo
-            val expression = if (accessor.isArray) {
-                val getAddressExpression = getGlobalAddressExpression(accessor.cGlobalName)
-                typeInfo.argFromBridged(getAddressExpression, kotlinFile, nativeBacked = this) + "!!"
-            } else {
-                typeInfo.argFromBridged(simpleBridgeGenerator.kotlinToNative(
-                        nativeBacked = this,
-                        returnType = typeInfo.bridgedType,
-                        kotlinValues = emptyList(),
-                        independent = false
-                ) {
-                    typeInfo.cToBridged(expr = accessor.cGlobalName)
-                }, kotlinFile, nativeBacked = this)
-            }
-            "get() = $expression"
-        }
-
         is PropertyAccessor.Getter.InterpretPointed -> {
             val typeParameters = accessor.typeParameters.joinToString(prefix = "<", postfix = ">") { renderStubType(it) }
             val getAddressExpression = getGlobalAddressExpression(accessor.cGlobalName)
             "get() = interpretPointed$typeParameters($getAddressExpression)"
-        }
-
-        is PropertyAccessor.Setter.BridgedSetter -> {
-            val typeInfo = accessor.typeInfo
-            val bridgedValue = BridgeTypedKotlinValue(typeInfo.bridgedType, typeInfo.argToBridged("value"))
-
-            "set(value) { " + simpleBridgeGenerator.kotlinToNative(
-                    nativeBacked = fakeNativeBackedStub,
-                    returnType = BridgedType.VOID,
-                    kotlinValues = listOf(bridgedValue),
-                    independent = false
-            ) { nativeValues ->
-                out("${accessor.cGlobalName} = ${typeInfo.cFromBridged(
-                        nativeValues.single(),
-                        scope,
-                        nativeBacked = fakeNativeBackedStub
-                )};")
-                ""
-            } + " }"
         }
     }
 
