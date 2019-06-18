@@ -4,13 +4,6 @@ import org.jetbrains.kotlin.native.interop.gen.jvm.InteropConfiguration
 import org.jetbrains.kotlin.native.interop.gen.jvm.KotlinPlatform
 import org.jetbrains.kotlin.native.interop.indexer.*
 
-data class StubIrBuilderResult(
-        val stubs: SimpleStubContainer,
-        val declarationMapper: DeclarationMapper,
-        val namesToBeDeclared: List<String>,
-        val bridgeGenerationComponents: BridgeGenerationComponents
-)
-
 /**
  * Additional components that are required to generate bridges.
  */
@@ -33,6 +26,23 @@ interface BridgeGenerationComponents {
     val enumToTypeMirror: Map<ClassStub.Enum, TypeMirror>
 }
 
+class BridgeGenerationComponentsBuilder(
+        val getterToBridgeInfo: MutableMap<PropertyAccessor.Getter.SimpleGetter, BridgeGenerationComponents.GlobalGetterBridgeInfo> = mutableMapOf(),
+        val setterToBridgeInfo: MutableMap<PropertyAccessor.Setter.SimpleSetter, BridgeGenerationComponents.GlobalSetterBridgeInfo> = mutableMapOf(),
+        val enumToTypeMirror: MutableMap<ClassStub.Enum, TypeMirror> = mutableMapOf()
+) {
+    fun build(): BridgeGenerationComponents = object : BridgeGenerationComponents {
+        override val getterToBridgeInfo = this@BridgeGenerationComponentsBuilder.getterToBridgeInfo
+
+        override val setterToBridgeInfo = this@BridgeGenerationComponentsBuilder.setterToBridgeInfo
+
+        override val enumToTypeMirror = this@BridgeGenerationComponentsBuilder.enumToTypeMirror
+    }
+}
+
+/**
+ * Common part of all [StubIrBuilder] implementations.
+ */
 interface StubsBuildingContext {
     val configuration: InteropConfiguration
 
@@ -54,11 +64,16 @@ interface StubsBuildingContext {
 
     fun tryCreateDoubleStub(type: Type, value: Double): DoubleConstantStub?
 
-    val getterToBridgeInfo: MutableMap<PropertyAccessor.Getter.SimpleGetter, BridgeGenerationComponents.GlobalGetterBridgeInfo>
+    val bridgeComponentsBuilder: BridgeGenerationComponentsBuilder
+}
 
-    val setterToBridgeInfo: MutableMap<PropertyAccessor.Setter.SimpleSetter, BridgeGenerationComponents.GlobalSetterBridgeInfo>
+/**
+ *
+ */
+internal interface StubElementBuilder {
+    val context: StubsBuildingContext
 
-    val enumToTypeMirror: MutableMap<ClassStub.Enum, TypeMirror>
+    fun build(): List<StubElement>
 }
 
 class StubsBuildingContextImpl(
@@ -242,15 +257,19 @@ class StubsBuildingContextImpl(
         return DoubleConstantStub(value)
     }
 
-    override val getterToBridgeInfo =
-            mutableMapOf<PropertyAccessor.Getter.SimpleGetter, BridgeGenerationComponents.GlobalGetterBridgeInfo>()
-
-    override val setterToBridgeInfo =
-            mutableMapOf<PropertyAccessor.Setter.SimpleSetter, BridgeGenerationComponents.GlobalSetterBridgeInfo>()
-
-    override val enumToTypeMirror = mutableMapOf<ClassStub.Enum, TypeMirror>()
+    override val bridgeComponentsBuilder = BridgeGenerationComponentsBuilder()
 }
 
+data class StubIrBuilderResult(
+        val stubs: SimpleStubContainer,
+        val declarationMapper: DeclarationMapper,
+        val namesToBeDeclared: List<String>,
+        val bridgeGenerationComponents: BridgeGenerationComponents
+)
+
+/**
+ * Produces [StubIrBuilderResult] for given [KotlinPlatform] using [InteropConfiguration].
+ */
 class StubIrBuilder(
         private val configuration: InteropConfiguration,
         platform: KotlinPlatform,
@@ -298,16 +317,12 @@ class StubIrBuilder(
         nativeIndex.wrappedMacros.filter { it.name !in excludedMacros }.forEach { generateStubsForWrappedMacro(it) }
 
         val meta = StubContainerMeta()
-        val stubs = SimpleStubContainer(meta, classes, functions, globals, typealiases, containers)
-        val extras = object : BridgeGenerationComponents {
-            override val getterToBridgeInfo = this@StubIrBuilder.buildingContext.getterToBridgeInfo
-
-            override val setterToBridgeInfo = this@StubIrBuilder.buildingContext.setterToBridgeInfo
-
-            override val enumToTypeMirror = this@StubIrBuilder.buildingContext.enumToTypeMirror
-        }
-        val result = StubIrBuilderResult(stubs, buildingContext.declarationMapper, buildingContext.computeNamesToBeDeclared(), extras)
-        return result
+        return StubIrBuilderResult(
+                SimpleStubContainer(meta, classes, functions, globals, typealiases, containers),
+                buildingContext.declarationMapper,
+                buildingContext.computeNamesToBeDeclared(),
+                buildingContext.bridgeComponentsBuilder.build()
+        )
     }
 
     private fun generateStubsForWrappedMacro(macro: WrappedMacroDef) {
@@ -339,14 +354,14 @@ class StubIrBuilder(
     }
 
     private fun generateStubsForObjCProtocol(objCProtocol: ObjCProtocol) {
-        addStubs(ObjCProtocolBuilder(buildingContext, objCProtocol).build())
+        addStubs(ObjCProtocolStubBuilder(buildingContext, objCProtocol).build())
     }
 
     private fun generateStubsForObjCClass(objCClass: ObjCClass) {
-        addStubs(ObjCClassBuilder(buildingContext, objCClass).build())
+        addStubs(ObjCClassStubBuilder(buildingContext, objCClass).build())
     }
 
     private fun generateStubsForObjCCategory(objCCategory: ObjCCategory) {
-        addStubs(ObjCCategoryBuilder(buildingContext, objCCategory).build())
+        addStubs(ObjCCategoryStubBuilder(buildingContext, objCCategory).build())
     }
 }

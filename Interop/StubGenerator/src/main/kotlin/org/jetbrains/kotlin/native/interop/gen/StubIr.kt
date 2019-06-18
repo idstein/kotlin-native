@@ -2,12 +2,7 @@ package org.jetbrains.kotlin.native.interop.gen
 
 import org.jetbrains.kotlin.native.interop.indexer.*
 
-class StubContainerMeta(
-        val textAtStart: String = "",
-        val textAtEnd: String = ""
-)
 
-// TODO: Looks like it should be splitted.
 interface StubContainer : StubElement {
     val meta: StubContainerMeta
     val classes: List<ClassStub>
@@ -18,7 +13,18 @@ interface StubContainer : StubElement {
 }
 
 /**
- * For things that should be grouped together like ObjC categories.
+ * Meta information about [StubContainer].
+ * For example, can be used for comments in textual representation.
+ */
+class StubContainerMeta(
+        val textAtStart: String = "",
+        val textAtEnd: String = ""
+)
+
+
+/**
+ * Trivial container of IR elements that can be used
+ * for module or ObjC category representation.
  */
 class SimpleStubContainer(
         override val meta: StubContainerMeta = StubContainerMeta(),
@@ -40,10 +46,11 @@ val StubContainer.children: List<StubElement>
         return classes + funcs + properties + typealiases
     }
 
+
 sealed class StubType
 
 /**
- * Marks that abstract value of such type can be passed value.
+ * Marks that abstract value of such type can be passed as value.
  */
 sealed class ValueStub
 

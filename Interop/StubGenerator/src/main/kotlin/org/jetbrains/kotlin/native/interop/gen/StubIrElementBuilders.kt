@@ -3,21 +3,17 @@ package org.jetbrains.kotlin.native.interop.gen
 import org.jetbrains.kotlin.native.interop.gen.jvm.KotlinPlatform
 import org.jetbrains.kotlin.native.interop.indexer.*
 
-private interface StubElementBuilder {
-    fun build(): List<StubElement>
-}
-
 internal class MacroConstantStubBuilder(
-        private val buildingContext: StubsBuildingContext,
+        override val context: StubsBuildingContext,
         private val constant: ConstantDef
 ) : StubElementBuilder {
     override fun build(): List<StubElement> {
         val kotlinName = constant.name
         val declaration = when (constant) {
             is IntegerConstantDef -> {
-                val literal = buildingContext.tryCreateIntegralStub(constant.type, constant.value) ?: return emptyList()
-                val kotlinType = WrapperStubType(buildingContext.mirror(constant.type).argType)
-                when (buildingContext.platform) {
+                val literal = context.tryCreateIntegralStub(constant.type, constant.value) ?: return emptyList()
+                val kotlinType = WrapperStubType(context.mirror(constant.type).argType)
+                when (context.platform) {
                     KotlinPlatform.NATIVE -> PropertyStub(kotlinName, kotlinType, PropertyStub.Kind.Constant(literal))
                     // No reason to make it const val with backing field on Kotlin/JVM yet:
                     KotlinPlatform.JVM -> {
@@ -27,8 +23,8 @@ internal class MacroConstantStubBuilder(
                 }
             }
             is FloatingConstantDef -> {
-                val literal = buildingContext.tryCreateDoubleStub(constant.type, constant.value) ?: return emptyList()
-                val kotlinType = WrapperStubType(buildingContext.mirror(constant.type).argType)
+                val literal = context.tryCreateDoubleStub(constant.type, constant.value) ?: return emptyList()
+                val kotlinType = WrapperStubType(context.mirror(constant.type).argType)
                 val getter = PropertyAccessor.Getter.SimpleGetter(constant = literal)
                 PropertyStub(kotlinName, kotlinType, PropertyStub.Kind.Val(getter))
             }
@@ -45,12 +41,12 @@ internal class MacroConstantStubBuilder(
 }
 
 internal class StructStubBuilder(
-        private val buildingContext: StubsBuildingContext,
+        override val context: StubsBuildingContext,
         private val decl: StructDecl
 
 ) : StubElementBuilder {
     override fun build(): List<StubElement> {
-        val platform = buildingContext.platform
+        val platform = context.platform
         val def = decl.def ?: return generateForwardStruct(decl)
 
         val structAnnotation: AnnotationStub? = if (platform == KotlinPlatform.JVM) {
@@ -64,14 +60,14 @@ internal class StructStubBuilder(
                 AnnotationStub.CStruct(it)
             }
         }
-        val classifier = buildingContext.declarationMapper.getKotlinClassForPointed(decl)
+        val classifier = context.declarationMapper.getKotlinClassForPointed(decl)
 
         val fields: List<PropertyStub?> = def.fields.map { field ->
             try {
                 assert(field.name.isNotEmpty())
                 assert(field.offset % 8 == 0L)
                 val offset = field.offset / 8
-                val fieldRefType = buildingContext.mirror(field.type)
+                val fieldRefType = context.mirror(field.type)
                 val unwrappedFieldType = field.type.unwrapTypedefs()
                 if (unwrappedFieldType is ArrayType) {
                     val type = (fieldRefType as TypeMirror.ByValue).valueType
@@ -104,7 +100,7 @@ internal class StructStubBuilder(
         }
 
         val bitFields: List<PropertyStub> = def.bitFields.map { field ->
-            val typeMirror = buildingContext.mirror(field.type)
+            val typeMirror = context.mirror(field.type)
             val typeInfo = typeMirror.info
             val kotlinType = typeMirror.argType
             val rawType = typeInfo.bridgedType
@@ -167,28 +163,28 @@ internal class StructStubBuilder(
     /**
      * Produces to [out] the definition of Kotlin class representing the reference to given forward (incomplete) struct.
      */
-    private fun generateForwardStruct(s: StructDecl): List<StubElement> = when (buildingContext.platform) {
+    private fun generateForwardStruct(s: StructDecl): List<StubElement> = when (context.platform) {
         KotlinPlatform.JVM -> emptyList() // ("class ${s.kotlinName.asSimpleName()}(rawPtr: NativePtr) : COpaque(rawPtr)")
         KotlinPlatform.NATIVE -> emptyList()
     }
 }
 
 internal class EnumStubBuilder(
-        private val buildingContext: StubsBuildingContext,
+        override val context: StubsBuildingContext,
         private val enumDef: EnumDef
 ) : StubElementBuilder {
     override fun build(): List<StubElement> {
-        if (!buildingContext.isStrictEnum(enumDef)) {
+        if (!context.isStrictEnum(enumDef)) {
             return generateEnumAsConstants(enumDef)
         }
 
-        val baseTypeMirror = buildingContext.mirror(enumDef.baseType)
+        val baseTypeMirror = context.mirror(enumDef.baseType)
         val baseType = WrapperStubType(baseTypeMirror.argType)
 
-        val clazz = (buildingContext.mirror(EnumType(enumDef)) as TypeMirror.ByValue).valueType.classifier
+        val clazz = (context.mirror(EnumType(enumDef)) as TypeMirror.ByValue).valueType.classifier
 
         val enumVariants = enumDef.constants.map {
-            val literal = buildingContext.tryCreateIntegralStub(enumDef.baseType, it.value)
+            val literal = context.tryCreateIntegralStub(enumDef.baseType, it.value)
                     ?: error("Cannot create enum value ${it.value} of type ${enumDef.baseType}")
             EnumVariantStub(it.name.asSimpleName(), literal)
         }
@@ -206,7 +202,7 @@ internal class EnumStubBuilder(
                 constructorParams = listOf(valueParamStub),
                 superClassInit = superClassInit
         )
-        buildingContext.enumToTypeMirror[enum] = baseTypeMirror
+        context.bridgeComponentsBuilder.enumToTypeMirror[enum] = baseTypeMirror
 
         return listOf(enum)
     }
@@ -222,12 +218,12 @@ internal class EnumStubBuilder(
 
         val constants = e.constants.filter {
             // Macro "overrides" the original enum constant.
-            it.name !in buildingContext.macroConstantsByName
+            it.name !in context.macroConstantsByName
         }
 
         val kotlinType: KotlinType
 
-        val baseKotlinType = buildingContext.mirror(e.baseType).argType
+        val baseKotlinType = context.mirror(e.baseType).argType
         if (e.isAnonymous) {
             // TODO: Use StubContainer.
 //            if (constants.isNotEmpty()) {
@@ -236,7 +232,7 @@ internal class EnumStubBuilder(
 
             kotlinType = baseKotlinType
         } else {
-            val typeMirror = buildingContext.mirror(EnumType(e))
+            val typeMirror = context.mirror(EnumType(e))
             if (typeMirror !is TypeMirror.ByValue) {
                 error("unexpected enum type mirror: $typeMirror")
             }
@@ -252,7 +248,7 @@ internal class EnumStubBuilder(
         }
 
         for (constant in constants) {
-            val literal = buildingContext.tryCreateIntegralStub(e.baseType, constant.value) ?: continue
+            val literal = context.tryCreateIntegralStub(e.baseType, constant.value) ?: continue
             val kind = PropertyStub.Kind.Constant(literal)
             results += PropertyStub(
                     constant.name,
@@ -267,11 +263,11 @@ internal class EnumStubBuilder(
 }
 
 internal class FunctionStubBuilder(
-        private val buildingContext: StubsBuildingContext,
+        override val context: StubsBuildingContext,
         private val func: FunctionDecl
 ) : StubElementBuilder {
     override fun build(): List<StubElement> {
-        val platform = buildingContext.platform
+        val platform = context.platform
         val parameters = mutableListOf<FunctionParameterStub>()
 
         func.parameters.forEachIndexed { index, parameter ->
@@ -306,7 +302,7 @@ internal class FunctionStubBuilder(
                     FunctionParameterStub(parameterName, WrapperStubType(representAsValuesRef), origin = origin)
                 }
                 else -> {
-                    val mirror = buildingContext.mirror(parameter.type)
+                    val mirror = context.mirror(parameter.type)
                     val type = WrapperStubType(mirror.argType)
                     FunctionParameterStub(parameterName, type, origin = origin)
                 }
@@ -316,7 +312,7 @@ internal class FunctionStubBuilder(
         val returnType = WrapperStubType(if (func.returnsVoid()) {
             KotlinTypes.unit
         } else {
-            buildingContext.mirror(func.returnType).argType
+            context.mirror(func.returnType).argType
         })
 
 
@@ -328,7 +324,7 @@ internal class FunctionStubBuilder(
         } else {
             val type = WrapperStubType(KotlinTypes.any.makeNullable())
             parameters += FunctionParameterStub("variadicArguments", type, isVararg = true)
-            annotations = listOf(AnnotationStub.CCall.Symbol(buildingContext.generateNextUniqueId("knifunptr_")))
+            annotations = listOf(AnnotationStub.CCall.Symbol(context.generateNextUniqueId("knifunptr_")))
             mustBeExternal = true
         }
         val functionStub = FunctionStub(
@@ -371,14 +367,14 @@ internal class FunctionStubBuilder(
         }
 
 
-        return KotlinTypes.cValuesRef.typeWith(buildingContext.mirror(pointeeType).pointedType).makeNullable()
+        return KotlinTypes.cValuesRef.typeWith(context.mirror(pointeeType).pointedType).makeNullable()
     }
 
 
     private val platformWStringTypes = setOf("LPCWSTR")
 
     private val noStringConversion: Set<String>
-        get() = buildingContext.configuration.noStringConversion
+        get() = context.configuration.noStringConversion
 
     private fun Type.isAliasOf(names: Set<String>): Boolean {
         var type = this
@@ -402,11 +398,11 @@ internal class FunctionStubBuilder(
 }
 
 internal class GlobalStubBuilder(
-        private val buildingContext: StubsBuildingContext,
+        override val context: StubsBuildingContext,
         private val global: GlobalDecl
 ) : StubElementBuilder {
     override fun build(): List<StubElement> {
-        val mirror = buildingContext.mirror(global.type)
+        val mirror = context.mirror(global.type)
         val unwrappedType = global.type.unwrapTypedefs()
 
         val kotlinType: KotlinType
@@ -415,7 +411,7 @@ internal class GlobalStubBuilder(
             kotlinType = (mirror as TypeMirror.ByValue).valueType
             val getter = PropertyAccessor.Getter.SimpleGetter()
             val extra = BridgeGenerationComponents.GlobalGetterBridgeInfo(global.name, mirror.info, isArray = true)
-            buildingContext.getterToBridgeInfo[getter] = extra
+            context.bridgeComponentsBuilder.getterToBridgeInfo[getter] = extra
             kind = PropertyStub.Kind.Val(getter)
         } else {
             when (mirror) {
@@ -423,13 +419,13 @@ internal class GlobalStubBuilder(
                     kotlinType = mirror.argType
                     val getter = PropertyAccessor.Getter.SimpleGetter()
                     val getterExtra = BridgeGenerationComponents.GlobalGetterBridgeInfo(global.name, mirror.info, isArray = false)
-                    buildingContext.getterToBridgeInfo[getter] = getterExtra
+                    context.bridgeComponentsBuilder.getterToBridgeInfo[getter] = getterExtra
                     kind = if (global.isConst) {
                         PropertyStub.Kind.Val(getter)
                     } else {
                         val setter = PropertyAccessor.Setter.SimpleSetter()
                         val setterExtra = BridgeGenerationComponents.GlobalSetterBridgeInfo(global.name, mirror.info)
-                        buildingContext.setterToBridgeInfo[setter] = setterExtra
+                        context.bridgeComponentsBuilder.setterToBridgeInfo[setter] = setterExtra
                         PropertyStub.Kind.Var(getter, setter)
                     }
                 }
@@ -445,12 +441,12 @@ internal class GlobalStubBuilder(
 }
 
 internal class TypedefStubBuilder(
-        private val buildingContext: StubsBuildingContext,
+        override val context: StubsBuildingContext,
         private val typedefDef: TypedefDef
 ) : StubElementBuilder {
     override fun build(): List<StubElement> {
-        val mirror = buildingContext.mirror(Typedef(typedefDef))
-        val baseMirror = buildingContext.mirror(typedefDef.aliased)
+        val mirror = context.mirror(Typedef(typedefDef))
+        val baseMirror = context.mirror(typedefDef.aliased)
 
         val varType = mirror.pointedType
         return when (baseMirror) {
@@ -471,11 +467,11 @@ internal class TypedefStubBuilder(
     }
 }
 
-private class ObjCMethodBuilder(
+private class ObjCMethodStubBuilder(
         private val method: ObjCMethod,
         private val container: ObjCContainer,
         private val isDesignatedInitializer: Boolean,
-        private val context: StubsBuildingContext
+        override val context: StubsBuildingContext
 ) : StubElementBuilder {
     private val isStret: Boolean
     private val stubReturnType: StubType
@@ -606,10 +602,10 @@ private fun ObjCMethod.getStubParameters(
     return result
 }
 
-internal abstract class ObjCContainerBuilder(
-        context: StubsBuildingContext,
+internal abstract class ObjCContainerStubBuilder(
+        override val context: StubsBuildingContext,
         private val container: ObjCClassOrProtocol,
-        protected val metaContainerStub: ObjCContainerBuilder?
+        protected val metaContainerStub: ObjCContainerStubBuilder?
 ) : StubElementBuilder {
     private val isMeta: Boolean get() = metaContainerStub == null
 
@@ -661,7 +657,7 @@ internal abstract class ObjCContainerBuilder(
     }
 
     private val methodToStub = methods.map {
-        it to ObjCMethodBuilder(it, container,
+        it to ObjCMethodStubBuilder(it, container,
                 isDesignatedInitializer = it.selector in designatedInitializerSelectors,
                 context = context
         )
@@ -733,13 +729,15 @@ internal abstract class ObjCContainerBuilder(
     }
 }
 
-internal sealed class ObjCClassOrProtocolBuilder(
+internal sealed class ObjCClassOrProtocolStubBuilder(
         context: StubsBuildingContext,
         private val container: ObjCClassOrProtocol
-) : ObjCContainerBuilder(
+) : ObjCContainerStubBuilder(
         context,
         container,
-        metaContainerStub = object : ObjCContainerBuilder(context, container, metaContainerStub = null) {
+        metaContainerStub = object : ObjCContainerStubBuilder(context, container, metaContainerStub = null) {
+            override val context = context
+
             override fun build(): List<StubElement> {
                 val (properties, methods) = buildBody()
                 val classStub = ClassStub.Simple(
@@ -754,8 +752,8 @@ internal sealed class ObjCClassOrProtocolBuilder(
         }
 )
 
-internal class ObjCProtocolBuilder(context: StubsBuildingContext, protocol: ObjCProtocol) :
-        ObjCClassOrProtocolBuilder(context, protocol), StubElementBuilder {
+internal class ObjCProtocolStubBuilder(context: StubsBuildingContext, protocol: ObjCProtocol) :
+        ObjCClassOrProtocolStubBuilder(context, protocol), StubElementBuilder {
     override fun build(): List<StubElement> {
         val (properties, methods) = buildBody()
         val classStub = ClassStub.Simple(
@@ -769,10 +767,10 @@ internal class ObjCProtocolBuilder(context: StubsBuildingContext, protocol: ObjC
     }
 }
 
-internal class ObjCClassBuilder(
-        private val context: StubsBuildingContext,
+internal class ObjCClassStubBuilder(
+        override val context: StubsBuildingContext,
         private val clazz: ObjCClass
-) : ObjCClassOrProtocolBuilder(context, clazz), StubElementBuilder {
+) : ObjCClassOrProtocolStubBuilder(context, clazz), StubElementBuilder {
     override fun build(): List<StubElement> {
         val companionSuper = context.declarationMapper
                 .getKotlinClassFor(clazz, isMeta = true)
@@ -799,21 +797,21 @@ internal class ObjCClassBuilder(
     }
 }
 
-internal class ObjCCategoryBuilder(
-        private val stubIrBuilder: StubsBuildingContext,
+internal class ObjCCategoryStubBuilder(
+        override val context: StubsBuildingContext,
         private val category: ObjCCategory
 ) : StubElementBuilder {
-    private val generatedMembers = stubIrBuilder.generatedObjCCategoriesMembers
+    private val generatedMembers = context.generatedObjCCategoriesMembers
             .getOrPut(category.clazz, { GeneratedObjCCategoriesMembers() })
 
     private val methodToBuilder = category.methods.filter { generatedMembers.register(it) }.map {
-        it to ObjCMethodBuilder(it, category, isDesignatedInitializer = false, context = stubIrBuilder)
+        it to ObjCMethodStubBuilder(it, category, isDesignatedInitializer = false, context = context)
     }.toMap()
 
     private val methodBuilders get() = methodToBuilder.values
 
     private val propertyBuilders = category.properties.filter { generatedMembers.register(it) }.mapNotNull {
-        createObjCPropertyBuilder(stubIrBuilder, it, category, methodToBuilder)
+        createObjCPropertyBuilder(context, it, category, methodToBuilder)
     }
 
     override fun build(): List<StubElement> {
@@ -833,22 +831,22 @@ private fun createObjCPropertyBuilder(
         context: StubsBuildingContext,
         property: ObjCProperty,
         container: ObjCContainer,
-        methodToStub: Map<ObjCMethod, ObjCMethodBuilder>
-): ObjCPropertyBuilder? {
+        methodToStub: Map<ObjCMethod, ObjCMethodStubBuilder>
+): ObjCPropertyStubBuilder? {
     // Note: the code below assumes that if the property is generated,
     // then its accessors are also generated as explicit methods.
     val getterStub = methodToStub[property.getter] ?: return null
     val setterStub = property.setter?.let { methodToStub[it] ?: return null }
-    return ObjCPropertyBuilder(context, property, container, getterStub, setterStub)
+    return ObjCPropertyStubBuilder(context, property, container, getterStub, setterStub)
 }
 
 
-private class ObjCPropertyBuilder(
-        private val context: StubsBuildingContext,
+private class ObjCPropertyStubBuilder(
+        override val context: StubsBuildingContext,
         private val property: ObjCProperty,
         private val container: ObjCContainer,
-        private val getterBuilder: ObjCMethodBuilder,
-        private val setterMethod: ObjCMethodBuilder?
+        private val getterBuilder: ObjCMethodStubBuilder,
+        private val setterMethod: ObjCMethodStubBuilder?
 ) : StubElementBuilder {
     override fun build(): List<PropertyStub> {
         val type = property.getType(container.classOrProtocol)

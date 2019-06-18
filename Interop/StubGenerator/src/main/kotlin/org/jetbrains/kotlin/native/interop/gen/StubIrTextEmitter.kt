@@ -6,6 +6,9 @@ import org.jetbrains.kotlin.native.interop.indexer.*
 import org.jetbrains.kotlin.utils.addToStdlib.firstIsInstance
 import java.lang.IllegalStateException
 
+/**
+ * Emits stubs and bridge functions as *.kt and *.c files.
+ */
 class StubIrTextEmitter(
         private val configuration: InteropConfiguration,
         private val libName: String,
