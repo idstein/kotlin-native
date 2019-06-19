@@ -286,7 +286,10 @@ class FunctionParameterStub(
 ) : ValueStub(), AnnotationHolder
 
 enum class MemberStubModality {
-    OVERRIDE, OPEN, NONE, FINAL
+    OVERRIDE,
+    OPEN,
+    NONE,
+    FINAL
 }
 
 interface FunctionalStub : AnnotationHolder, StubElement {
@@ -388,6 +391,7 @@ class FunctionStub(
     }
 }
 
+// TODO: should we support non-trivial constructors?
 class ConstructorStub(
         override val parameters: List<FunctionParameterStub>,
         override val annotations: List<AnnotationStub>

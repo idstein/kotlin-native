@@ -43,7 +43,6 @@ internal class MacroConstantStubBuilder(
 internal class StructStubBuilder(
         override val context: StubsBuildingContext,
         private val decl: StructDecl
-
 ) : StubElementBuilder {
     override fun build(): List<StubElement> {
         val platform = context.platform
@@ -498,14 +497,16 @@ private class ObjCMethodStubBuilder(
                 isStret
         )
         annotations = buildObjCMethodAnnotations(methodAnnotation)
-        parameters = method.getStubParameters(context, forConstructorOrFactory = false)
+        parameters = method.getParameterStubs(context, forConstructorOrFactory = false)
         external = (container !is ObjCProtocol)
         modality = when (container) {
-            is ObjCClassOrProtocol -> if (method.isOverride(container)) {
-                MemberStubModality.OVERRIDE
-            } else when (container) {
-                is ObjCClass -> MemberStubModality.OPEN
-                is ObjCProtocol -> MemberStubModality.NONE
+            is ObjCClassOrProtocol -> {
+                if (method.isOverride(container)) {
+                    MemberStubModality.OVERRIDE
+                } else when (container) {
+                    is ObjCClass -> MemberStubModality.OPEN
+                    is ObjCProtocol -> MemberStubModality.NONE
+                }
             }
             is ObjCCategory -> MemberStubModality.NONE
         }
@@ -526,7 +527,7 @@ private class ObjCMethodStubBuilder(
         results += FunctionStub(name, stubReturnType, parameters, origin, annotations, external, receiverType, modality)
 
         if (method.isInit) {
-            val parameters = method.getStubParameters(context, forConstructorOrFactory = true)
+            val parameters = method.getParameterStubs(context, forConstructorOrFactory = true)
             when (container) {
                 // TODO: should `deprecatedInit` be added?
                 is ObjCClass -> {
@@ -543,12 +544,12 @@ private class ObjCMethodStubBuilder(
                     val clazz= context.declarationMapper
                             .getKotlinClassFor(container.clazz, isMeta = false).type
 
-                    val factoryAnnonation = AnnotationStub.ObjC.Factory(
+                    val factoryAnnotation = AnnotationStub.ObjC.Factory(
                             method.selector.quoteAsKotlinLiteral(),
                             method.encoding.quoteAsKotlinLiteral(),
                             isStret
                     )
-                    val annotations = buildObjCMethodAnnotations(factoryAnnonation)
+                    val annotations = buildObjCMethodAnnotations(factoryAnnotation)
 
                     val originalReturnType = method.getReturnType(container.clazz)
                     val typeParameter = TypeParameterStub("T", WrapperStubType(clazz))
@@ -579,7 +580,7 @@ private class ObjCMethodStubBuilder(
     }
 }
 
-private fun ObjCMethod.getStubParameters(
+private fun ObjCMethod.getParameterStubs(
         stubIrBuilder: StubsBuildingContext,
         forConstructorOrFactory: Boolean
 ): List<FunctionParameterStub> {
@@ -604,11 +605,17 @@ private fun ObjCMethod.getStubParameters(
 }
 
 internal abstract class ObjCContainerStubBuilder(
-        override val context: StubsBuildingContext,
+        final override val context: StubsBuildingContext,
         private val container: ObjCClassOrProtocol,
         protected val metaContainerStub: ObjCContainerStubBuilder?
 ) : StubElementBuilder {
     private val isMeta: Boolean get() = metaContainerStub == null
+
+    private val designatedInitializerSelectors = if (container is ObjCClass && !isMeta) {
+        container.getDesignatedInitializerSelectors(mutableSetOf())
+    } else {
+        emptySet()
+    }
 
     private val methods: List<ObjCMethod>
     private val properties: List<ObjCProperty>
@@ -649,19 +656,8 @@ internal abstract class ObjCContainerStubBuilder(
         }
     }
 
-    private val methodBuilders get() = methodToStub.values
-
-    private val designatedInitializerSelectors = if (container is ObjCClass && !isMeta) {
-        container.getDesignatedInitializerSelectors(mutableSetOf())
-    } else {
-        emptySet()
-    }
-
     private val methodToStub = methods.map {
-        it to ObjCMethodStubBuilder(it, container,
-                isDesignatedInitializer = it.selector in designatedInitializerSelectors,
-                context = context
-        )
+        it to ObjCMethodStubBuilder(it, container, it.selector in designatedInitializerSelectors, context)
     }.toMap()
 
     private val propertyBuilders = properties.mapNotNull {
@@ -692,9 +688,8 @@ internal abstract class ObjCContainerStubBuilder(
         }
     }
 
-    val supers = mutableListOf<StubType>()
-
-    init {
+    val interfaces: List<StubType> by lazy {
+        val interfaces = mutableListOf<StubType>()
         if (container is ObjCClass) {
             val baseClass = container.baseClass
             val baseClassifier = if (baseClass != null) {
@@ -702,27 +697,28 @@ internal abstract class ObjCContainerStubBuilder(
             } else {
                 if (isMeta) KotlinTypes.objCObjectBaseMeta else KotlinTypes.objCObjectBase
             }
-            supers += WrapperStubType(baseClassifier.type)
+            interfaces += WrapperStubType(baseClassifier.type)
         }
         container.protocols.forEach {
-            supers += WrapperStubType(context.declarationMapper.getKotlinClassFor(it, isMeta).type)
+            interfaces += WrapperStubType(context.declarationMapper.getKotlinClassFor(it, isMeta).type)
         }
-        if (supers.isEmpty()) {
+        if (interfaces.isEmpty()) {
             assert(container is ObjCProtocol)
             val classifier = if (isMeta) KotlinTypes.objCObjectMeta else KotlinTypes.objCObject
-            supers += WrapperStubType(classifier.type)
+            interfaces += WrapperStubType(classifier.type)
         }
         if (!isMeta && container.isProtocolClass()) {
             // TODO: map Protocol type to ObjCProtocol instead.
-            supers += WrapperStubType(KotlinTypes.objCProtocol.type)
+            interfaces += WrapperStubType(KotlinTypes.objCProtocol.type)
         }
+        interfaces
     }
 
-    fun buildBody(): Pair<List<PropertyStub>, List<FunctionalStub>> {
+    protected fun buildBody(): Pair<List<PropertyStub>, List<FunctionalStub>> {
         // TODO: add protected constructor if needed
         return Pair(
                 propertyBuilders.flatMap { it.build() },
-                methodBuilders.flatMap { it.build() }
+                methodToStub.values.flatMap { it.build() }
         )
     }
 }
@@ -734,7 +730,6 @@ internal sealed class ObjCClassOrProtocolStubBuilder(
         context,
         container,
         metaContainerStub = object : ObjCContainerStubBuilder(context, container, metaContainerStub = null) {
-            override val context = context
 
             override fun build(): List<StubElement> {
                 val (properties, methods) = buildBody()
@@ -768,7 +763,7 @@ internal class ObjCProtocolStubBuilder(
 }
 
 internal class ObjCClassStubBuilder(
-        override val context: StubsBuildingContext,
+        context: StubsBuildingContext,
         private val clazz: ObjCClass
 ) : ObjCClassOrProtocolStubBuilder(context, clazz), StubElementBuilder {
     override fun build(): List<StubElement> {
@@ -839,7 +834,6 @@ private fun createObjCPropertyBuilder(
     val setterStub = property.setter?.let { methodToStub[it] ?: return null }
     return ObjCPropertyStubBuilder(context, property, container, getterStub, setterStub)
 }
-
 
 private class ObjCPropertyStubBuilder(
         override val context: StubsBuildingContext,

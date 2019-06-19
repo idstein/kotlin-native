@@ -246,16 +246,22 @@ class StubIrTextEmitter(
 
         override fun visitFunction(element: FunctionStub) {
             val modality = renderMemberModality(element.modality)
-            val external = if (element.external) "external " else ""
             element.annotations.forEach {
                 out(renderAnnotation(it))
             }
             val parameters = element.parameters.joinToString(prefix = "(", postfix = ")") { renderFunctionParameter(it) }
             val receiver = element.receiverType?.let { renderStubType(it) + "." } ?: ""
             val typeParameters = renderTypeParameters(element.typeParameters)
-            block("$external${modality}fun $typeParameters $receiver${element.name}$parameters: ${renderStubType(element.returnType)}") {
-                renderBridgeBody(element)
+            val header = "${modality}fun $typeParameters $receiver${element.name}$parameters: ${renderStubType(element.returnType)}"
+            when {
+                element.external -> out("external $header")
+                element.isObjCMethodOptional() -> out("$header = optional()")
+
+                else -> block(header) {
+                    renderBridgeBody(element)
+                }
             }
+
         }
 
         override fun visitProperty(element: PropertyStub) {
@@ -290,7 +296,10 @@ class StubIrTextEmitter(
         }
 
         override fun visitConstructor(constructorStub: ConstructorStub) {
-
+            constructorStub.annotations.forEach {
+                out(renderAnnotation(it))
+            }
+            out("constructor(${constructorStub.parameters.joinToString { renderFunctionParameter(it) }})")
         }
 
         override fun visitPropertyAccessor(propertyAccessor: PropertyAccessor) {
@@ -390,7 +399,7 @@ class StubIrTextEmitter(
     }
 
     private fun renderBridgeBody(function: FunctionStub) {
-        assert(function.origin is StubOrigin.Function)
+        assert(function.origin is StubOrigin.Function) { "Can't create bridge for ${function.name}" }
         val origin = function.origin as StubOrigin.Function
         val bodyGenerator = KotlinCodeBuilder(scope = kotlinFile)
         val bridgeArguments = mutableListOf<TypedKotlinValue>()
