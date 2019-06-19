@@ -27,7 +27,7 @@ import kotlin.test.*
     val floatArray = FloatArray(10)
     println(floatArray.size.toString())
 
-    val doubleArray = FloatArray(11)
+    val doubleArray = DoubleArray(11)
     println(doubleArray.size.toString())
 
     val booleanArray = BooleanArray(12)
