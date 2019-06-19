@@ -305,9 +305,9 @@ class StubIrBuilder(
     private val buildingContext = StubsBuildingContextImpl(configuration, platform, imports, nativeIndex)
 
     fun build(): StubIrBuilderResult {
-        nativeIndex.objCProtocols.forEach { generateStubsForObjCProtocol(it) }
-        nativeIndex.objCClasses.forEach { generateStubsForObjCClass(it) }
-        nativeIndex.objCCategories.forEach { generateStubsForObjCCategory(it) }
+        nativeIndex.objCProtocols.filter { !it.isForwardDeclaration }.forEach { generateStubsForObjCProtocol(it) }
+        nativeIndex.objCClasses.filter { !it.isForwardDeclaration && !it.isNSStringSubclass()} .forEach { generateStubsForObjCClass(it) }
+        nativeIndex.objCCategories.filter { !it.clazz.isNSStringSubclass() }.forEach { generateStubsForObjCCategory(it) }
         nativeIndex.typedefs.forEach { generateStubsForTypedef(it) }
         nativeIndex.globals.filter { it.name !in excludedFunctions }.forEach { generateStubsForGlobal(it) }
         nativeIndex.enums.forEach { generateStubsForEnum(it) }

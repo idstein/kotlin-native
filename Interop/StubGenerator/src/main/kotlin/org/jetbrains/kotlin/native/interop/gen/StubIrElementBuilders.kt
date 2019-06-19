@@ -193,14 +193,10 @@ internal class EnumStubBuilder(
 
         val valueParamStub = ConstructorParamStub("value", baseType, qualifier)
 
-        // TODO: It's an interface.
-        val superClassInit = SuperClassInit(SymbolicStubType("CEnum"))
-
-
         val enum = ClassStub.Enum(clazz, enumVariants,
                 origin = StubOrigin.Enum(enumDef),
                 constructorParams = listOf(valueParamStub),
-                superClassInit = superClassInit
+                interfaces = listOf(SymbolicStubType("CEnum"))
         )
         context.bridgeComponentsBuilder.enumToTypeMirror[enum] = baseTypeMirror
 
@@ -475,8 +471,8 @@ private class ObjCMethodStubBuilder(
 ) : StubElementBuilder {
     private val isStret: Boolean
     private val stubReturnType: StubType
-    val annotations: List<AnnotationStub>
-    private val parameters: List<FunctionParameterStub>
+    val annotations = mutableListOf<AnnotationStub>()
+    private val kotlinMethodParameters: List<FunctionParameterStub>
     private val external: Boolean
     private val receiverType: StubType?
     private val name: String = method.kotlinName
@@ -492,12 +488,12 @@ private class ObjCMethodStubBuilder(
             WrapperStubType(context.mirror(returnType).argType)
         }
         val methodAnnotation = AnnotationStub.ObjC.Method(
-                method.selector.quoteAsKotlinLiteral(),
-                method.encoding.quoteAsKotlinLiteral(),
+                method.selector,
+                method.encoding,
                 isStret
         )
-        annotations = buildObjCMethodAnnotations(methodAnnotation)
-        parameters = method.getParameterStubs(context, forConstructorOrFactory = false)
+        annotations += buildObjCMethodAnnotations(methodAnnotation)
+        kotlinMethodParameters = method.getParameterStubs(context, forConstructorOrFactory = false)
         external = (container !is ObjCProtocol)
         modality = when (container) {
             is ObjCClassOrProtocol -> {
@@ -511,7 +507,7 @@ private class ObjCMethodStubBuilder(
             is ObjCCategory -> MemberStubModality.NONE
         }
         receiverType = if (container is ObjCCategory)
-            WrapperStubType(context.declarationMapper.getKotlinClassFor(container.clazz, isMeta = method.isClass).type)
+            ClassifierStubType(context.declarationMapper.getKotlinClassFor(container.clazz, isMeta = method.isClass))
         else null
     }
 
@@ -524,29 +520,41 @@ private class ObjCMethodStubBuilder(
     override fun build(): List<FunctionalStub> {
         val results = mutableListOf<FunctionalStub>()
 
-        results += FunctionStub(name, stubReturnType, parameters, origin, annotations, external, receiverType, modality)
+        results += FunctionStub(name, stubReturnType, kotlinMethodParameters, origin, annotations, external, receiverType, modality)
 
         if (method.isInit) {
             val parameters = method.getParameterStubs(context, forConstructorOrFactory = true)
             when (container) {
                 // TODO: should `deprecatedInit` be added?
                 is ObjCClass -> {
-                    // TODO: consider generating non-designated initializers as factories.
+                    annotations.add(0, deprecatedInit(
+                            container.kotlinClassName(method.isClass),
+                            kotlinMethodParameters.map { it.name },
+                            factory = false
+                    ))
                     val designated = isDesignatedInitializer ||
                             context.configuration.disableDesignatedInitializerChecks
 
-                    val annotations = listOf(AnnotationStub.ObjC.Constructor(method.selector.quoteAsKotlinLiteral(), designated))
+                    val annotations = listOf(AnnotationStub.ObjC.Constructor(method.selector, designated))
                     val constructor = ConstructorStub(parameters, annotations)
                     results += constructor
                 }
                 is ObjCCategory -> {
                     assert(!method.isClass)
-                    val clazz= context.declarationMapper
+
+
+                    val clazz = context.declarationMapper
                             .getKotlinClassFor(container.clazz, isMeta = false).type
 
+                    annotations.add(0, deprecatedInit(
+                            clazz.classifier.fqName,
+                            kotlinMethodParameters.map { it.name },
+                            factory = true
+                    ))
+
                     val factoryAnnotation = AnnotationStub.ObjC.Factory(
-                            method.selector.quoteAsKotlinLiteral(),
-                            method.encoding.quoteAsKotlinLiteral(),
+                            method.selector,
+                            method.encoding,
                             isStret
                     )
                     val annotations = buildObjCMethodAnnotations(factoryAnnotation)
@@ -559,7 +567,7 @@ private class ObjCMethodStubBuilder(
                         // This shouldn't happen actually.
                         this.stubReturnType
                     }
-                    val receiverType = SymbolicStubType(KotlinTypes.objCClassOf, listOf(typeParameter))
+                    val receiverType = ClassifierStubType(KotlinTypes.objCClassOf, listOf(typeParameter))
                     val createMethod = FunctionStub(
                             "create",
                             returnType,
@@ -715,7 +723,7 @@ internal abstract class ObjCContainerStubBuilder(
     }
 
     protected fun buildBody(): Pair<List<PropertyStub>, List<FunctionalStub>> {
-        // TODO: add protected constructor if needed
+        // TODO: Generate protected constructor for meta
         return Pair(
                 propertyBuilders.flatMap { it.build() },
                 methodToStub.values.flatMap { it.build() }
@@ -738,7 +746,9 @@ internal sealed class ObjCClassOrProtocolStubBuilder(
                         properties = properties,
                         functions = methods,
                         origin = StubOrigin.None,
-                        modality = super.modality
+                        modality = super.modality,
+                        annotations = listOf(externalObjCAnnotation),
+                        interfaces = super.interfaces
                 )
                 return listOf(classStub)
             }
@@ -756,9 +766,11 @@ internal class ObjCProtocolStubBuilder(
                 properties = properties,
                 functions = methods,
                 origin = StubOrigin.ObjCProtocol(protocol),
-                modality = super.modality
+                modality = super.modality,
+                annotations = listOf(externalObjCAnnotation),
+                interfaces = super.interfaces
         )
-        return listOf(classStub, *metaContainerStub!!.build().toTypedArray())
+        return listOf(*metaContainerStub!!.build().toTypedArray(), classStub)
     }
 }
 
@@ -769,7 +781,7 @@ internal class ObjCClassStubBuilder(
     override fun build(): List<StubElement> {
         val companionSuper = context.declarationMapper
                 .getKotlinClassFor(clazz, isMeta = true)
-                .let { SymbolicStubType(it) }
+                .let { ClassifierStubType(it) }
 
         val objCClassType = KotlinTypes.objCClassOf.typeWith(
                 context.declarationMapper.getKotlinClassFor(clazz, isMeta = false).type
@@ -786,9 +798,11 @@ internal class ObjCClassStubBuilder(
                 properties = properties,
                 functions = methods,
                 modality = super.modality,
-                companion = companion
+                companion = companion,
+                annotations = listOf(externalObjCAnnotation),
+                interfaces = super.interfaces
         )
-        return listOf(classStub)
+        return listOf(*metaContainerStub!!.build().toTypedArray(), classStub)
     }
 }
 
@@ -811,10 +825,12 @@ internal class ObjCCategoryStubBuilder(
 
     override fun build(): List<StubElement> {
         val description = "${category.clazz.name} (${category.name})"
-        val startText = "// @interface $description"
-        val endText = "// @end; // $description"
+        val meta = StubContainerMeta(
+                "// @interface $description",
+                "// @end; // $description"
+        )
         val container = SimpleStubContainer(
-                meta = StubContainerMeta(startText, endText),
+                meta = meta,
                 functions = methodBuilders.flatMap { it.build() },
                 properties = propertyBuilders.flatMap { it.build() }
         )
@@ -853,8 +869,16 @@ private class ObjCPropertyStubBuilder(
             is ObjCClassOrProtocol -> null
             is ObjCCategory -> context.declarationMapper
                     .getKotlinClassFor(container.clazz, isMeta = property.getter.isClass)
-                    .let { SymbolicStubType(it) }
+                    .let { ClassifierStubType(it) }
         }
         return listOf(PropertyStub(property.name, WrapperStubType(kotlinType), kind, modality, receiver))
     }
+}
+
+private fun deprecatedInit(className: String, initParameterNames: List<String>, factory: Boolean): AnnotationStub {
+    val replacement = if (factory) "$className.create" else className
+    val replacementKind = if (factory) "factory method" else "constructor"
+    val replaceWith = "$replacement(${initParameterNames.joinToString { it.asSimpleName() }})"
+
+    return AnnotationStub.Deprecated("Use $replacementKind instead", replaceWith)
 }

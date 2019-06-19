@@ -172,7 +172,7 @@ class StubIrTextEmitter(
     fun emit() {
         withOutput(ktFile) {
             generateKotlinFileHeader()
-            printer.visitContainer(builderResult.stubs)
+            printer.visitSimpleStubContainer(builderResult.stubs, null)
         }
         val nativeBridges = simpleBridgeGenerator.prepare()
 
@@ -212,13 +212,15 @@ class StubIrTextEmitter(
                 contains("begin") || contains("end")
     }
 
-    private val printer = object : StubIrVisitor {
-        override fun visitClass(element: ClassStub) {
+    private val printer = object : StubIrVisitorAux<StubContainer?> {
+
+        override fun visitClass(element: ClassStub, owner: StubContainer?) {
             element.annotations.forEach {
                 out(renderAnnotation(it))
             }
+            // TODO: move to separate method
             element.annotations.filterIsInstance<AnnotationStub.ObjC.ExternalClass>().firstOrNull()?.let {
-                if (it.protocolGetter.isNotEmpty()) {
+                if (it.protocolGetter.isNotEmpty() && element.origin is StubOrigin.ObjCProtocol) {
                     val protocol = (element.origin as StubOrigin.ObjCProtocol).protocol
                     emitProtocolGetter(it.protocolGetter, protocol)
                 }
@@ -227,24 +229,20 @@ class StubIrTextEmitter(
                 if (element is ClassStub.Enum) {
                     emitEnumBody(element)
                 } else {
-                    visitContainer(element)
+                    out("")
+                    element.children.forEach {
+                        it.accept(this, element)
+                        out("")
+                    }
                 }
             }
         }
 
-        override fun visitContainer(element: StubContainer) {
-            out("")
-            element.children.forEach {
-                it.accept(this)
-                out("")
-            }
-        }
-
-        override fun visitTypealias(element: TypealiasStub) {
+        override fun visitTypealias(element: TypealiasStub, owner: StubContainer?) {
             out("typealias ${renderStubType(element.alias)} = ${renderStubType(element.aliasee)}")
         }
 
-        override fun visitFunction(element: FunctionStub) {
+        override fun visitFunction(element: FunctionStub, owner: StubContainer?) {
             val modality = renderMemberModality(element.modality)
             element.annotations.forEach {
                 out(renderAnnotation(it))
@@ -252,11 +250,11 @@ class StubIrTextEmitter(
             val parameters = element.parameters.joinToString(prefix = "(", postfix = ")") { renderFunctionParameter(it) }
             val receiver = element.receiverType?.let { renderStubType(it) + "." } ?: ""
             val typeParameters = renderTypeParameters(element.typeParameters)
-            val header = "${modality}fun $typeParameters $receiver${element.name}$parameters: ${renderStubType(element.returnType)}"
+            val header = "${modality}fun $typeParameters $receiver${element.name.asSimpleName()}$parameters: ${renderStubType(element.returnType)}"
             when {
                 element.external -> out("external $header")
                 element.isObjCMethodOptional() -> out("$header = optional()")
-
+                owner != null && ownerIsInterface(owner) -> out(header)
                 else -> block(header) {
                     renderBridgeBody(element)
                 }
@@ -264,7 +262,16 @@ class StubIrTextEmitter(
 
         }
 
-        override fun visitProperty(element: PropertyStub) {
+        // A little bit hacky.
+        private fun ownerIsInterface(owner: StubContainer): Boolean {
+            return if (owner is ClassStub.Simple) {
+                owner.modality == ClassStubModality.INTERFACE
+            } else {
+                false
+            }
+        }
+
+        override fun visitProperty(element: PropertyStub, owner: StubContainer?) {
             element.annotations.forEach {
                 out(renderAnnotation(it))
             }
@@ -295,27 +302,46 @@ class StubIrTextEmitter(
             }
         }
 
-        override fun visitConstructor(constructorStub: ConstructorStub) {
+        override fun visitConstructor(constructorStub: ConstructorStub, owner: StubContainer?) {
             constructorStub.annotations.forEach {
                 out(renderAnnotation(it))
             }
-            out("constructor(${constructorStub.parameters.joinToString { renderFunctionParameter(it) }})")
+            out("constructor(${constructorStub.parameters.joinToString { renderFunctionParameter(it) }}) {}")
         }
 
-        override fun visitPropertyAccessor(propertyAccessor: PropertyAccessor) {
+        override fun visitPropertyAccessor(propertyAccessor: PropertyAccessor, owner: StubContainer?) {
 
         }
 
-        override fun visitSimpleStubContainer(simpleStubContainer: SimpleStubContainer) {
-            out(simpleStubContainer.meta.textAtStart)
-            out("")
-            simpleStubContainer.classes.forEach { it.accept(this) }
-            simpleStubContainer.functions.forEach { it.accept(this) }
-            simpleStubContainer.properties.forEach { it.accept(this) }
-            simpleStubContainer.typealiases.forEach { it.accept(this) }
-            simpleStubContainer.simpleContainers.forEach { it.accept(this) }
-            out(simpleStubContainer.meta.textAtEnd)
-            out("")
+        override fun visitSimpleStubContainer(simpleStubContainer: SimpleStubContainer, owner: StubContainer?) {
+            if (simpleStubContainer.meta.textAtStart.isNotEmpty()) {
+                out(simpleStubContainer.meta.textAtStart)
+                out("")
+            }
+            simpleStubContainer.classes.forEach {
+                it.accept(this, simpleStubContainer)
+                out("")
+            }
+            simpleStubContainer.functions.forEach {
+                it.accept(this, simpleStubContainer)
+                out("")
+            }
+            simpleStubContainer.properties.forEach {
+                it.accept(this, simpleStubContainer)
+                out("")
+            }
+            simpleStubContainer.typealiases.forEach {
+                it.accept(this, simpleStubContainer)
+                out("")
+            }
+            simpleStubContainer.simpleContainers.forEach {
+                it.accept(this, simpleStubContainer)
+                out("")
+            }
+            if (simpleStubContainer.meta.textAtEnd.isNotEmpty()) {
+                out(simpleStubContainer.meta.textAtEnd)
+                out("")
+            }
         }
     }
 
@@ -467,17 +493,22 @@ class StubIrTextEmitter(
             is ClassStub.Enum -> renderConstructorParams(classStub.constructorParams)
         }
 
-        val superClassInit = classStub.superClassInit?.let { " : " + renderSuperInit(it) } ?: ""
-
-        val interfaces = if (classStub.interfaces.isEmpty()) {
-            ""
-        } else {
-            classStub.interfaces.joinToString(prefix = if (superClassInit.isNotEmpty()) ", " else " ") {
-                renderStubType(it)
+        val inheritance = run {
+            if (classStub.superClassInit != null || classStub.interfaces.isNotEmpty()) {
+                val superClassInit = classStub.superClassInit?.let { renderSuperInit(it) } ?: ""
+                val interfaces = if (classStub.interfaces.isEmpty()) {
+                    ""
+                } else {
+                    classStub.interfaces.joinToString(prefix = if (superClassInit.isNotEmpty()) ", " else "") {
+                        renderStubType(it)
+                    }
+                }
+                " : $superClassInit$interfaces"
+            } else {
+                ""
             }
         }
-
-        return "$modality $className$constructorParams$superClassInit$interfaces"
+        return "$modality $className$constructorParams$inheritance"
     }
 
     private fun declareClassifier(classifier: Classifier): String {
@@ -518,7 +549,8 @@ class StubIrTextEmitter(
 
     private fun renderStubType(stubType: StubType): String = when (stubType) {
         is WrapperStubType -> stubType.kotlinType.render(kotlinFile)
-        is SymbolicStubType -> stubType.name + renderTypeParameters(stubType.typeParameters)
+        is ClassifierStubType -> kotlinFile.reference(stubType.classifier) + renderTypeParameters(stubType.typeParameters)
+        is SymbolicStubType -> stubType.name + if (stubType.nullable) "?" else "" + renderTypeParameters(stubType.typeParameters)
     }
 
     private fun renderValueUsage(value: ValueStub): String = when (value) {
@@ -532,10 +564,12 @@ class StubIrTextEmitter(
     private fun renderAnnotation(annotationStub: AnnotationStub): String = when (annotationStub) {
         AnnotationStub.ObjC.ConsumesReceiver -> "@CCall.ConsumesReceiver"
         AnnotationStub.ObjC.ReturnsRetained -> "@CCall.ReturnsRetained"
-        is AnnotationStub.ObjC.Method ->
+        is AnnotationStub.ObjC.Method -> {
             "@ObjCMethod(${annotationStub.selector.quoteAsKotlinLiteral()}, ${annotationStub.encoding.quoteAsKotlinLiteral()}, ${annotationStub.isStret})"
-        is AnnotationStub.ObjC.Factory ->
+        }
+        is AnnotationStub.ObjC.Factory -> {
             "@ObjCFactory(${annotationStub.selector.quoteAsKotlinLiteral()}, ${annotationStub.encoding.quoteAsKotlinLiteral()}, ${annotationStub.isStret})"
+        }
         AnnotationStub.ObjC.Consumed ->
             "@CCall.Consumed"
         is AnnotationStub.ObjC.Constructor ->
@@ -555,95 +589,102 @@ class StubIrTextEmitter(
             "@CNaturalStruct(${annotationStub.struct.quoteAsKotlinLiteral()})"
         is AnnotationStub.CLength ->
             "@CLength(${annotationStub.length})"
+        is AnnotationStub.Deprecated ->
+            "@Deprecated(${annotationStub.message.quoteAsKotlinLiteral()}, " +
+                    "ReplaceWith(${annotationStub.replaceWith.quoteAsKotlinLiteral()}), " +
+                    "DeprecationLevel.ERROR)"
     }
 
     private fun renderEnumVariant(enumEntryStub: EnumEntryStub): String =
             "${enumEntryStub.name}(${renderValueUsage(enumEntryStub.constant)})"
 
-    private fun renderPropertyAccessor(accessor: PropertyAccessor): String = when (accessor) {
-        is PropertyAccessor.Getter.SimpleGetter -> {
-            when {
-                accessor.constant != null -> " = ${renderValueUsage(accessor.constant)}"
-                accessor in builderResult.bridgeGenerationComponents.getterToBridgeInfo -> {
-                    val extra = builderResult.bridgeGenerationComponents.getterToBridgeInfo.getValue(accessor)
-                    val typeInfo = extra.typeInfo
-                    val expression = if (extra.isArray) {
-                        val getAddressExpression = getGlobalAddressExpression(extra.cGlobalName)
-                        typeInfo.argFromBridged(getAddressExpression, kotlinFile, nativeBacked = this) + "!!"
-                    } else {
-                        typeInfo.argFromBridged(simpleBridgeGenerator.kotlinToNative(
-                                nativeBacked = this,
-                                returnType = typeInfo.bridgedType,
-                                kotlinValues = emptyList(),
-                                independent = false
-                        ) {
-                            typeInfo.cToBridged(expr = extra.cGlobalName)
-                        }, kotlinFile, nativeBacked = this)
+    private fun renderPropertyAccessor(accessor: PropertyAccessor): String {
+        val annotations = accessor.annotations.joinToString(separator = "") { renderAnnotation(it) + " " }
+        return annotations + when (accessor) {
+            is PropertyAccessor.Getter.SimpleGetter -> {
+                when {
+                    accessor.constant != null -> " = ${renderValueUsage(accessor.constant)}"
+                    accessor in builderResult.bridgeGenerationComponents.getterToBridgeInfo -> {
+                        val extra = builderResult.bridgeGenerationComponents.getterToBridgeInfo.getValue(accessor)
+                        val typeInfo = extra.typeInfo
+                        val expression = if (extra.isArray) {
+                            val getAddressExpression = getGlobalAddressExpression(extra.cGlobalName)
+                            typeInfo.argFromBridged(getAddressExpression, kotlinFile, nativeBacked = this) + "!!"
+                        } else {
+                            typeInfo.argFromBridged(simpleBridgeGenerator.kotlinToNative(
+                                    nativeBacked = this,
+                                    returnType = typeInfo.bridgedType,
+                                    kotlinValues = emptyList(),
+                                    independent = false
+                            ) {
+                                typeInfo.cToBridged(expr = extra.cGlobalName)
+                            }, kotlinFile, nativeBacked = this)
+                        }
+                        "get() = $expression"
                     }
-                    "get() = $expression"
+                    else -> TODO()
+                }
+            }
+            is PropertyAccessor.Getter.ExternalGetter -> "external get()"
+
+            is PropertyAccessor.Getter.ArrayMemberAt -> "get() = arrayMemberAt(${accessor.offset})"
+
+            is PropertyAccessor.Getter.MemberAt -> {
+                if (accessor.typeArguments.isEmpty()) {
+                    "get() = memberAt(${accessor.offset})"
+                } else {
+                    val typeArguments = renderTypeArguments(accessor.typeArguments)
+                    "get() = memberAt$typeArguments(${accessor.offset}).value"
+                }
+            }
+
+            is PropertyAccessor.Getter.ReadBits -> {
+                "get() = readBits(this.rawPtr, ${accessor.offset}, ${accessor.size}, ${accessor.signed}).${accessor.rawType.convertor}()!!"
+            }
+
+            is PropertyAccessor.Setter.SimpleSetter -> when {
+                accessor in builderResult.bridgeGenerationComponents.setterToBridgeInfo -> {
+                    val extra = builderResult.bridgeGenerationComponents.setterToBridgeInfo.getValue(accessor)
+                    val typeInfo = extra.typeInfo
+                    val bridgedValue = BridgeTypedKotlinValue(typeInfo.bridgedType, typeInfo.argToBridged("value"))
+
+                    "set(value) { " + simpleBridgeGenerator.kotlinToNative(
+                            nativeBacked = fakeNativeBackedStub,
+                            returnType = BridgedType.VOID,
+                            kotlinValues = listOf(bridgedValue),
+                            independent = false
+                    ) { nativeValues ->
+                        out("${extra.cGlobalName} = ${typeInfo.cFromBridged(
+                                nativeValues.single(),
+                                scope,
+                                nativeBacked = fakeNativeBackedStub
+                        )};")
+                        ""
+                    } + " }"
                 }
                 else -> TODO()
             }
-        }
-        is PropertyAccessor.Getter.ExternalGetter -> "external get()"
 
-        is PropertyAccessor.Getter.ArrayMemberAt -> "get() = arrayMemberAt(${accessor.offset})"
-
-        is PropertyAccessor.Getter.MemberAt -> {
-            if (accessor.typeArguments.isEmpty()) {
-                "get() = memberAt(${accessor.offset})"
-            } else {
-                val typeArguments = renderTypeArguments(accessor.typeArguments)
-                "get() = memberAt$typeArguments(${accessor.offset}).value"
+            is PropertyAccessor.Setter.MemberAt -> {
+                if (accessor.typeArguments.isEmpty()) {
+                    error("Unexpected memberAt setter without type parameters!")
+                } else {
+                    val typeArguments = renderTypeArguments(accessor.typeArguments)
+                    "set(value) { memberAt$typeArguments(${accessor.offset}).value = value }"
+                }
             }
-        }
 
-        is PropertyAccessor.Getter.ReadBits -> {
-            "get() = readBits(this.rawPtr, ${accessor.offset}, ${accessor.size}, ${accessor.signed}).${accessor.rawType.convertor}()!!"
-        }
-
-        is PropertyAccessor.Setter.SimpleSetter -> when {
-            accessor in builderResult.bridgeGenerationComponents.setterToBridgeInfo -> {
-                val extra = builderResult.bridgeGenerationComponents.setterToBridgeInfo.getValue(accessor)
-                val typeInfo = extra.typeInfo
-                val bridgedValue = BridgeTypedKotlinValue(typeInfo.bridgedType, typeInfo.argToBridged("value"))
-
-                "set(value) { " + simpleBridgeGenerator.kotlinToNative(
-                        nativeBacked = fakeNativeBackedStub,
-                        returnType = BridgedType.VOID,
-                        kotlinValues = listOf(bridgedValue),
-                        independent = false
-                ) { nativeValues ->
-                    out("${extra.cGlobalName} = ${typeInfo.cFromBridged(
-                            nativeValues.single(),
-                            scope,
-                            nativeBacked = fakeNativeBackedStub
-                    )};")
-                    ""
-                } + " }"
+            is PropertyAccessor.Setter.WriteBits -> {
+                "set() = writeBits(this.rawPtr, ${accessor.offset}, ${accessor.size}, TODO())"
             }
-            else -> TODO()
-        }
 
-        is PropertyAccessor.Setter.MemberAt -> {
-            if (accessor.typeArguments.isEmpty()) {
-                error("Unexpected memberAt setter without type parameters!")
-            } else {
-                val typeArguments = renderTypeArguments(accessor.typeArguments)
-                "set(value) { memberAt$typeArguments(${accessor.offset}).value = value }"
+            is PropertyAccessor.Setter.ExternalSetter -> "external set(TODO)"
+
+            is PropertyAccessor.Getter.InterpretPointed -> {
+                val typeParameters = accessor.typeParameters.joinToString(prefix = "<", postfix = ">") { renderStubType(it) }
+                val getAddressExpression = getGlobalAddressExpression(accessor.cGlobalName)
+                "get() = interpretPointed$typeParameters($getAddressExpression)"
             }
-        }
-
-        is PropertyAccessor.Setter.WriteBits -> {
-            "set() = writeBits(this.rawPtr, ${accessor.offset}, ${accessor.size}, TODO())"
-        }
-
-        is PropertyAccessor.Setter.ExternalSetter -> "external set(TODO)"
-
-        is PropertyAccessor.Getter.InterpretPointed -> {
-            val typeParameters = accessor.typeParameters.joinToString(prefix = "<", postfix = ">") { renderStubType(it) }
-            val getAddressExpression = getGlobalAddressExpression(accessor.cGlobalName)
-            "get() = interpretPointed$typeParameters($getAddressExpression)"
         }
     }
 

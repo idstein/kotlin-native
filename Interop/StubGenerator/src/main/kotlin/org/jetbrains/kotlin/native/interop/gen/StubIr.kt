@@ -21,7 +21,6 @@ class StubContainerMeta(
         val textAtEnd: String = ""
 )
 
-
 /**
  * Trivial container of IR elements that can be used
  * for module or ObjC category representation.
@@ -36,6 +35,10 @@ class SimpleStubContainer(
 ) : StubContainer {
     override fun accept(visitor: StubIrVisitor) {
         visitor.visitSimpleStubContainer(this)
+    }
+
+    override fun <T> accept(visitorAux: StubIrVisitorAux<T>, data: T) {
+        visitorAux.visitSimpleStubContainer(this, data)
     }
 }
 
@@ -85,18 +88,17 @@ class WrapperStubType(
 /**
  * Fallback variant for all cases where we cannot refer to specific [KotlinType].
  */
+class ClassifierStubType(
+        val classifier: Classifier,
+        val typeParameters: List<TypeParameterStub> = emptyList(),
+        override val nullable: Boolean = false
+) : StubType()
+
 class SymbolicStubType(
         val name: String,
         val typeParameters: List<TypeParameterStub> = emptyList(),
         override val nullable: Boolean = false
-) : StubType() {
-
-    constructor(
-            classifier: Classifier,
-            typeParameters: List<TypeParameterStub> = emptyList(),
-            nullable: Boolean = false
-    ) : this(classifier.fqName, typeParameters, nullable)
-}
+) : StubType()
 
 /**
  * Represents a source of StubIr element.
@@ -132,6 +134,8 @@ sealed class StubOrigin {
 
 interface StubElement {
     fun accept(visitor: StubIrVisitor)
+
+    fun <T> accept(visitorAux: StubIrVisitorAux<T>, data: T)
 }
 
 interface StubElementWithOrigin : StubElement {
@@ -162,7 +166,9 @@ sealed class AnnotationStub {
     class CStruct(val struct: String) : AnnotationStub()
     class CNaturalStruct(val struct: String) : AnnotationStub()
 
-    class CLength(val length: Long): AnnotationStub()
+    class CLength(val length: Long) : AnnotationStub()
+
+    class Deprecated(val message: String, val replaceWith: String) : AnnotationStub()
 }
 
 /**
@@ -194,6 +200,10 @@ class PropertyStub(
 
     override fun accept(visitor: StubIrVisitor) {
         visitor.visitProperty(this)
+    }
+
+    override fun <T> accept(visitorAux: StubIrVisitorAux<T>, data: T) {
+        visitorAux.visitProperty(this, data)
     }
 }
 
@@ -272,6 +282,10 @@ sealed class ClassStub : StubElementWithOrigin, StubContainer, AnnotationHolder 
 
     override fun accept(visitor: StubIrVisitor) {
         visitor.visitClass(this)
+    }
+
+    override fun <T> accept(visitorAux: StubIrVisitorAux<T>, data: T) {
+        visitorAux.visitClass(this, data)
     }
 
     override val typealiases: List<TypealiasStub> = emptyList()
@@ -373,6 +387,10 @@ sealed class PropertyAccessor : FunctionalStub {
     override fun accept(visitor: StubIrVisitor) {
         visitor.visitPropertyAccessor(this)
     }
+
+    override fun <T> accept(visitorAux: StubIrVisitorAux<T>, data: T) {
+        visitorAux.visitPropertyAccessor(this, data)
+    }
 }
 
 class FunctionStub(
@@ -389,6 +407,10 @@ class FunctionStub(
     override fun accept(visitor: StubIrVisitor) {
         visitor.visitFunction(this)
     }
+
+    override fun <T> accept(visitorAux: StubIrVisitorAux<T>, data: T) {
+        visitorAux.visitFunction(this, data)
+    }
 }
 
 // TODO: should we support non-trivial constructors?
@@ -398,6 +420,10 @@ class ConstructorStub(
 ) : FunctionalStub {
     override fun accept(visitor: StubIrVisitor) {
         visitor.visitConstructor(this)
+    }
+
+    override fun <T> accept(visitorAux: StubIrVisitorAux<T>, data: T) {
+        visitorAux.visitConstructor(this, data)
     }
 }
 
@@ -412,5 +438,9 @@ class TypealiasStub(
 ) : StubElement {
     override fun accept(visitor: StubIrVisitor) {
         visitor.visitTypealias(this)
+    }
+
+    override fun <T> accept(visitorAux: StubIrVisitorAux<T>, data: T) {
+        visitorAux.visitTypealias(this, data)
     }
 }
